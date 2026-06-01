@@ -1,0 +1,31 @@
+name: 'Integracion Continua Modulo 4'
+
+on:
+  push:
+    branches: [qa, main]
+  pull_request:
+    branches: [qa, main]
+
+jobs:
+  testing-proceso:
+    name: 'Ejecucion de Testing Automatizado'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Clonar Codigo del Repositorio
+      uses: actions/checkout@v3
+
+    - name: Configurar Python en el Servidor
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Instalar Dependencias - Academic Risk Service
+      run: |
+        cd academic-risk-service
+        pip install -r requirements.txt
+
+    - name: Ejecutar Tests (Unitarios y Funcionales)
+      run: |
+        cd academic-risk-service
+        pytest
