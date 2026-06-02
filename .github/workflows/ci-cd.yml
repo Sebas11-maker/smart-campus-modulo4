@@ -8,7 +8,7 @@ on:
 
 jobs:
   testing-proceso:
-    name: 'Ejecucion de Testing Automatizado'
+    name: 'Ejecucion de Testing Automatizado y CD'
     runs-on: ubuntu-latest
 
     steps:
@@ -20,6 +20,7 @@ jobs:
       with:
         python-version: '3.10'
 
+    
     - name: Testing - Academic Risk
       run: |
         cd academic-risk-service
@@ -31,3 +32,58 @@ jobs:
         cd notification-service
         pip install -r requirements.txt
         pytest
+
+    
+    - name: Desplegar Microservicios en AWS - Entorno QA
+      if: github.event_name == 'push' && github.ref == 'refs/heads/qa'
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.AWS_QA_SERVER_IP }}        
+        username: ec2-user
+        key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}       
+        script: |
+          # 1. Entrar a la carpeta o clonar si no existe
+          cd /home/ec2-user/smart-campus-modulo4 || git clone ${{ github.server_url }}/${{ github.repository }} /home/ec2-user/smart-campus-modulo4
+          cd /home/ec2-user/smart-campus-modulo4
+          
+          # 2. Actualizar el código a lo último de QA
+          git fetch origin qa
+          git checkout qa
+          git pull origin qa
+          
+          # 3. Compilar y levantar Microservicio 1 (Academic Risk) en el puerto 8001
+          cd academic-risk-service
+          docker build -t academic-risk:qa .
+          docker stop risk-qa || true && docker rm risk-qa || true
+          docker run -d -p 8001:8001 --name risk-qa academic-risk:qa
+          
+          # 4. Compilar y levantar Microservicio 2 (Notification) en el puerto 8002
+          cd ../notification-service
+          docker build -t notification:qa .
+          docker stop notify-qa || true && docker rm notify-qa || true
+          docker run -d -p 8002:8002 --name notify-qa notification:qa
+
+    - name: Desplegar Microservicios en AWS - Entorno PROD
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.AWS_PROD_SERVER_IP }}      # IP de la EC2 de PROD (detrás del balanceador)
+        username: ec2-user
+        key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
+        script: |
+          cd /home/ec2-user/smart-campus-modulo4 || git clone ${{ github.server_url }}/${{ github.repository }} /home/ec2-user/smart-campus-modulo4
+          cd /home/ec2-user/smart-campus-modulo4
+          git fetch origin main
+          git checkout main
+          git pull origin main
+          
+          # Levantar contenedores productivos
+          cd academic-risk-service
+          docker build -t academic-risk:prod .
+          docker stop risk-prod || true && docker rm risk-prod || true
+          docker run -d -p 8001:8001 --name risk-prod academic-risk:prod
+          
+          cd ../notification-service
+          docker build -t notification:prod .
+          docker stop notify-prod || true && docker rm notify-prod || true
+          docker run -d -p 8002:8002 --name notify-prod notification:prod
