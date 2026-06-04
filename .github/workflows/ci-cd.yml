@@ -66,13 +66,14 @@ jobs:
         docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
 
     
-    - name: Desplegar en Instancias EC2 Separadas por SSH Proxy
+  
+    - name: Desplegar en Instancia EC2 via SSH Proxy
       uses: appleboy/ssh-action@master
       with:
         host: '10.0.3.41' 
         username: 'ec2-user'
         key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
-        proxy_host: ${{ secrets.AWS_QA_SERVER_IP }} 
+        proxy_host: '44.203.12.179' 
         proxy_username: 'ec2-user'
         proxy_key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
         script: |
