@@ -1,89 +1,82 @@
-name: 'Integracion Continua Modulo 4'
+name: 'CI/CD Pipeline Modulo 4'
 
 on:
   push:
-    branches: [qa, main]
-  pull_request:
-    branches: [qa, main]
+    branches:
+      - qa
+      - main
 
 jobs:
-  testing-proceso:
-    name: 'Ejecucion de Testing Automatizado y CD'
+  pipeline_distribuido:
+    name: 'CI-CD Multi-Account'
     runs-on: ubuntu-latest
 
     steps:
-    - name: Clonar Codigo del Repositorio
+    - name: Copiar Codigo
       uses: actions/checkout@v3
 
-    - name: Configurar Python en el Servidor
+    - name: Configurar Node (Requerido para Nx)
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+
+    - name: Instalar Nx
+      run: npm install
+
+    - name: Configurar Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
 
-    
-    - name: Testing - Academic Risk
+    - name: Instalar Dependencias de Test
       run: |
-        cd academic-risk-service
-        pip install -r requirements.txt
-        pytest
-
-    - name: Testing - Notification Service
-      run: |
-        cd notification-service
-        pip install -r requirements.txt
-        pytest
+        pip install pytest fastapi uvicorn httpx
+        if [ -f academic-risk-service/requirements.txt ]; then pip install -r academic-risk-service/requirements.txt; fi
+        if [ -f notification-service/requirements.txt ]; then pip install -r notification-service/requirements.txt; fi
 
     
-    - name: Desplegar Microservicios en AWS - Entorno QA
-      if: github.event_name == 'push' && github.ref == 'refs/heads/qa'
-      uses: appleboy/ssh-action@master
-      with:
-        host: ${{ secrets.AWS_QA_SERVER_IP }}        
-        username: ec2-user
-        key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}       
-        script: |
-          # 1. Entrar a la carpeta o clonar si no existe
-          cd /home/ec2-user/smart-campus-modulo4 || git clone ${{ github.server_url }}/${{ github.repository }} /home/ec2-user/smart-campus-modulo4
-          cd /home/ec2-user/smart-campus-modulo4
-          
-          # 2. Actualizar el código a lo último de QA
-          git fetch origin qa
-          git checkout qa
-          git pull origin qa
-          
-          # 3. Compilar y levantar Microservicio 1 (Academic Risk) en el puerto 8001
-          cd academic-risk-service
-          docker build -t academic-risk:qa .
-          docker stop risk-qa || true && docker rm risk-qa || true
-          docker run -d -p 8001:8001 --name risk-qa academic-risk:qa
-          
-          # 4. Compilar y levantar Microservicio 2 (Notification) en el puerto 8002
-          cd ../notification-service
-          docker build -t notification:qa .
-          docker stop notify-qa || true && docker rm notify-qa || true
-          docker run -d -p 8002:8002 --name notify-qa notification:qa
+    
+    
+    - name: Ejecutar Pruebas mediante Nx Graph
+      run: npx nx run-many --target=test
 
-    - name: Desplegar Microservicios en AWS - Entorno PROD
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    - name: Autenticar en DockerHub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Configurar Variables de Entorno Docker
+      run: |
+        if [ "${{ github.ref }}" = "refs/heads/qa" ]; then
+          echo "TAG=qa" >> $GITHUB_ENV
+        else
+          echo "TAG=prod" >> $GITHUB_ENV
+        fi
+
+    - name: Compilar y Subir Imagen - Academic Risk
+      run: |
+        docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} -f academic-risk-service/Dockerfile .
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+
+    - name: Compilar y Subir Imagen - Notification Service
+      run: |
+        docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} -f notification-service/Dockerfile .
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
+
+    
+    - name: Desplegar en Instancias EC2 Separadas por SSH Proxy
       uses: appleboy/ssh-action@master
       with:
-        host: ${{ secrets.AWS_PROD_SERVER_IP }}      # IP de la EC2 de PROD (detrás del balanceador)
-        username: ec2-user
+        host: '10.0.3.41' 
+        username: 'ec2-user'
         key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
+        proxy_host: ${{ secrets.AWS_QA_SERVER_IP }} 
+        proxy_username: 'ec2-user'
+        proxy_key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
         script: |
-          cd /home/ec2-user/smart-campus-modulo4 || git clone ${{ github.server_url }}/${{ github.repository }} /home/ec2-user/smart-campus-modulo4
-          cd /home/ec2-user/smart-campus-modulo4
-          git fetch origin main
-          git checkout main
-          git pull origin main
-          
-          # Levantar contenedores productivos
-          cd academic-risk-service
-          docker build -t academic-risk:prod .
-          docker stop risk-prod || true && docker rm risk-prod || true
-          docker run -d -p 8001:8001 --name risk-prod academic-risk:prod
-          
-          cd ../notification-service
-          docker build -t notification:prod .
-          docker stop notify-prod || true && docker rm notify-prod || true
-          docker run -d -p 8002:8002 --name notify-prod notification:prod
+          sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
+          sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+          sudo docker stop risk-service || true && sudo docker rm risk-service || true
+          sudo docker run -d -p 8001:8001 --name risk-service ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}

@@ -1,0 +1,57 @@
+[2m> [22mpytest academic-risk-service/test_main.py
+
+[1m============================= test session starts =============================[0m
+platform win32 -- Python 3.13.5, pytest-8.1.1, pluggy-1.6.0
+rootdir: C:\Users\Sebas\Desktop\smart-campus-modulo4
+plugins: anyio-4.13.0
+collected 3 items
+
+academic-risk-service\test_main.py [31mF[0m[32m.[0m[32m.[0m[31m                                   [100%][0m
+
+================================== FAILURES ===================================
+[31m[1m____________________________ test_verificar_estado ____________________________[0m
+
+    def test_verificar_estado():
+        respuesta = cliente_prueba.get("/")
+        assert respuesta.status_code == 200
+>       assert respuesta.json()["estado"] == "Activo"
+
+[1m[31macademic-risk-service\test_main.py[0m:10: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+[1m[31m..\..\AppData\Local\Programs\Python\Python313\Lib\site-packages\httpx\_models.py[0m:764: in json
+    return jsonlib.loads(self.content, **kwargs)
+[1m[31m..\..\AppData\Local\Programs\Python\Python313\Lib\json\__init__.py[0m:346: in loads
+    return _default_decoder.decode(s)
+[1m[31m..\..\AppData\Local\Programs\Python\Python313\Lib\json\decoder.py[0m:345: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x0000021C09CA3CB0>
+s = '\n    <!DOCTYPE html>\n    <html lang="es">\n    <head>\n        <meta charset="UTF-8">\n        <meta name="viewport...a EC2 Independiente</span>\n                </div>\n            </div>\n        </div>\n    </body>\n    </html>\n    '
+idx = 5
+
+    def raw_decode(self, s, idx=0):
+        """Decode a JSON document from ``s`` (a ``str`` beginning with
+        a JSON document) and return a 2-tuple of the Python
+        representation and the index in ``s`` where the document ended.
+    
+        This can be used to decode a JSON document from a string that may
+        have extraneous data at the end.
+    
+        """
+        try:
+            obj, end = self.scan_once(s, idx)
+        except StopIteration as err:
+>           raise JSONDecodeError("Expecting value", s, err.value) from None
+[1m[31mE           json.decoder.JSONDecodeError: Expecting value: line 2 column 5 (char 5)[0m
+
+[1m[31m..\..\AppData\Local\Programs\Python\Python313\Lib\json\decoder.py[0m:363: JSONDecodeError
+[33m============================== warnings summary ===============================[0m
+..\..\AppData\Local\Programs\Python\Python313\Lib\site-packages\httpx\_client.py:680
+  C:\Users\Sebas\AppData\Local\Programs\Python\Python313\Lib\site-packages\httpx\_client.py:680: DeprecationWarning: The 'app' shortcut is now deprecated. Use the explicit style 'transport=WSGITransport(app=...)' instead.
+    warnings.warn(message, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+[36m[1m=========================== short test summary info ===========================[0m
+[31mFAILED[0m academic-risk-service/test_main.py::[1mtest_verificar_estado[0m - json.decoder.JSONDecodeError: Expecting value: line 2 column 5 (char 5)
+[31m=================== [31m[1m1 failed[0m, [32m2 passed[0m, [33m1 warning[0m[31m in 1.27s[0m[31m ====================[0m
