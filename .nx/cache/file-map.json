@@ -1,0 +1,83 @@
+{
+  "version": "6.0",
+  "nxVersion": "19.0.0",
+  "deps": {
+    "nx": "19.0.0"
+  },
+  "pathMappings": {},
+  "nxJsonPlugins": [],
+  "fileMap": {
+    "nonProjectFiles": [
+      {
+        "file": "README.md",
+        "hash": "671867315944119935"
+      },
+      {
+        "file": "nx.json",
+        "hash": "18430247469856942402"
+      },
+      {
+        "file": ".gitignore",
+        "hash": "807254541127382808"
+      },
+      {
+        "file": ".github/workflows/ci-cd.yml",
+        "hash": "15007482130043686711"
+      },
+      {
+        "file": "package.json",
+        "hash": "12264638652035689784"
+      },
+      {
+        "file": "package-lock.json",
+        "hash": "15315472314702275354"
+      }
+    ],
+    "projectFileMap": {
+      "notification-service": [
+        {
+          "file": "notification-service/Dockerfile",
+          "hash": "4781041360890072613"
+        },
+        {
+          "file": "notification-service/main.py",
+          "hash": "15382702077559696017"
+        },
+        {
+          "file": "notification-service/project.json",
+          "hash": "7238622886370934373"
+        },
+        {
+          "file": "notification-service/requirements.txt",
+          "hash": "9697424283603831192"
+        },
+        {
+          "file": "notification-service/test_main.py",
+          "hash": "2940486981096181224"
+        }
+      ],
+      "academic-risk-service": [
+        {
+          "file": "academic-risk-service/Dockerfile",
+          "hash": "1041474078947930756"
+        },
+        {
+          "file": "academic-risk-service/main.py",
+          "hash": "14717463320668897184"
+        },
+        {
+          "file": "academic-risk-service/project.json",
+          "hash": "15324870912658759230"
+        },
+        {
+          "file": "academic-risk-service/requirements.txt",
+          "hash": "8023069123331860425"
+        },
+        {
+          "file": "academic-risk-service/test_main.py",
+          "hash": "8235058454328268475"
+        }
+      ]
+    }
+  }
+}

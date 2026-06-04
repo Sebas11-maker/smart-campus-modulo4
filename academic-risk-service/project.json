@@ -1,0 +1,12 @@
+{
+  "name": "academic-risk-service",
+  "projectType": "application",
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pytest academic-risk-service/test_main.py"
+      }
+    }
+  }
+}
