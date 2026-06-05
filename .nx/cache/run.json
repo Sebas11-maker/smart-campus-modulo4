@@ -1,0 +1,32 @@
+{
+  "run": {
+    "command": "nx run-many --target=test",
+    "startTime": "2026-06-04T21:54:12.932Z",
+    "endTime": "2026-06-04T21:54:15.734Z",
+    "inner": false
+  },
+  "tasks": [
+    {
+      "taskId": "academic-risk-service:test",
+      "target": "test",
+      "projectName": "academic-risk-service",
+      "hash": "7111583289832050006",
+      "startTime": "2026-06-04T21:54:12.940Z",
+      "endTime": "2026-06-04T21:54:15.462Z",
+      "params": "",
+      "cacheStatus": "cache-miss",
+      "status": 1
+    },
+    {
+      "taskId": "notification-service:test",
+      "target": "test",
+      "projectName": "notification-service",
+      "hash": "17259825202153044326",
+      "startTime": "2026-06-04T21:54:12.940Z",
+      "endTime": "2026-06-04T21:54:15.686Z",
+      "params": "",
+      "cacheStatus": "cache-miss",
+      "status": 1
+    }
+  ]
+}

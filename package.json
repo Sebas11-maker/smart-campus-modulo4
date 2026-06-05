@@ -1,0 +1,13 @@
+{
+  "name": "smart-campus-modulo4",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "graph": "nx graph",
+    "test:all": "nx run-many --target=test",
+    "build:all": "nx run-many --target=build"
+  },
+  "devDependencies": {
+    "nx": "19.0.0"
+  }
+}
