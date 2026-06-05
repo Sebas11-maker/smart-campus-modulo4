@@ -74,20 +74,20 @@ jobs:
       - name: Ejecutar Despliegue sobre Servidor Privado
         uses: appleboy/ssh-action@master
         with:
-          # --- Conexión directa al Bastion Host ---
-          host: ${{ secrets.AWS_QA_SERVER_IP }}
-          username: ec2-user
-          key: ${{ secrets.AWS_SSH_PRIVATE_KEY }} # CORRECCIÓN: Autenticar con la llave SSH real
+          # --- Conexión directa al Bastion Host (Fijamos la IP real de su consola) ---
+          host: '3.223.140.120'
+          username: ubuntu 
+          key: ${{ secrets.AWS_LLAVE_FRESCA }} # CORRECCIÓN: Usando el nuevo secreto sanitizado
           
           # --- El Bastion inyecta los comandos nativamente por SSH hacia la IP interna ---
           script: |
             echo "===> Conectado al Bastion Host. Iniciando salto interno... <==="
             
-            # 1. Reconstruir la llave .pem temporal dentro del Bastion de forma dinámica
-            echo "${{ secrets.AWS_SSH_PRIVATE_KEY }}" > /tmp/labsuser.pem
+            # 1. Reconstruir la llave .pem temporal dentro del Bastion usando el secreto limpio
+            echo "${{ secrets.AWS_LLAVE_FRESCA }}" > /tmp/labsuser.pem
             chmod 400 /tmp/labsuser.pem
             
-            # 2. Inyectar comandos a través del puente local a la IP de Ubuntu
+            # 2. Inyectar comandos a través del puente local a la IP de la máquina de microservicios
             ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 << 'EOF'
               echo "===> Conexión Exitosa dentro de la Instancia Privada de QA <==="
               
