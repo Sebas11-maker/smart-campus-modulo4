@@ -75,7 +75,8 @@ jobs:
       - name: Ejecutar Despliegue sobre Servidores Privados
         uses: appleboy/ssh-action@master
         with:
-          host: '44.204.212.133' # IP pública de su Bastion Host
+          # --- CORRECCIÓN: IP pública del Bastion Host actualizada ---
+          host: '18.207.148.0'
           username: ubuntu 
           key: ${{ secrets.AWS_LLAVE_FRESCA }}
           script: |
@@ -94,7 +95,7 @@ jobs:
             sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
 
             # ==================================================================
-            # FLUJO A: ACADEMIC RISK SERVICE (IP: 10.0.3.249)
+            # FLUJO A: ACADEMIC RISK SERVICE (IP Fija: 10.0.3.249)
             # ==================================================================
             echo "===> Desplegando Academic Risk Service Offline... <==="
             if ! ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "command -v docker &>/dev/null"; then
@@ -111,7 +112,7 @@ jobs:
             sudo rm -f /tmp/risk-service.tar
 
             # ==================================================================
-            # FLUJO B: NOTIFICATION SERVICE (IP: 10.0.3.222)
+            # FLUJO B: NOTIFICATION SERVICE (IP Fija: 10.0.3.222)
             # ==================================================================
             echo "===> Desplegando Notification Service Offline... <==="
             if ! ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "command -v docker &>/dev/null"; then
