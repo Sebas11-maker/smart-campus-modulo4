@@ -57,7 +57,6 @@ jobs:
 
       - name: Construir y Subir Imagen Docker
         run: |
-          # CORRECCIÓN: Ruta real basada en su árbol de directorios de la raíz
           docker build \
             -f academic-risk-service/Dockerfile \
             -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} .
@@ -78,12 +77,12 @@ jobs:
           # --- Configuración del Bastion Host (Puerta de Entrada) ---
           host: ${{ secrets.AWS_QA_SERVER_IP }}
           username: ec2-user
-          key: ${{ secrets.AWS_PRIVATE_KEY_PEM }}
+          key: ${{ secrets.AWS_SSH_PRIVATE_KEY }} # CORRECCIÓN: Nombre exacto de tu secreto en GitHub
 
           # --- Configuración del Salto SSH Proxy (Instancia Privada) ---
           proxy_host: '3.223.140.120'
           proxy_username: ec2-user
-          proxy_key: ${{ secrets.AWS_PRIVATE_KEY_PEM }}
+          proxy_key: ${{ secrets.AWS_SSH_PRIVATE_KEY }} # CORRECCIÓN: Nombre exacto de tu secreto en GitHub
 
           # --- Comandos en la instancia interna (10.0.3.41) ---
           script: |
