@@ -49,7 +49,7 @@ jobs:
       - name: Configurar Python (Scripts de Soporte)
         uses: actions/setup-python@v4
         with:
-          python-python: '3.10'
+          python-version: '3.10'
 
       - name: Generar Tag Automático
         id: vars
@@ -57,7 +57,11 @@ jobs:
 
       - name: Construir y Subir Imagen Docker
         run: |
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} .
+          # CORRECCIÓN: Ruta real basada en su árbol de directorios de la raíz
+          docker build \
+            -f academic-risk-service/Dockerfile \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} .
+          
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
 
   deploy-qa:
@@ -71,14 +75,17 @@ jobs:
       - name: Ejecutar Despliegue sobre Servidor Privado
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ secrets.AWS_QA_SERVER_IP }} # Tomará automáticamente la IP de los Secrets (3.223.140.120)
+          # --- Configuración del Bastion Host (Puerta de Entrada) ---
+          host: ${{ secrets.AWS_QA_SERVER_IP }}
           username: ec2-user
-          key: ${{ secrets.AWS_PRIVATE_KEY_PEM }} # Su archivo labsuser.pem guardado en los secretos
+          key: ${{ secrets.AWS_PRIVATE_KEY_PEM }}
 
-          proxy_host: '3.223.140.120' # IP estática del Bastion recién creado por Terraform
+          # --- Configuración del Salto SSH Proxy (Instancia Privada) ---
+          proxy_host: '3.223.140.120'
           proxy_username: ec2-user
           proxy_key: ${{ secrets.AWS_PRIVATE_KEY_PEM }}
 
+          # --- Comandos en la instancia interna (10.0.3.41) ---
           script: |
             echo "===> Conexión SSH Proxy Exitosa a la Instancia Privada <==="
             
@@ -86,7 +93,6 @@ jobs:
             
             sudo docker stop risk-service || true
             sudo docker rm risk-service || true
-            
             sudo docker image prune -f
             
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
