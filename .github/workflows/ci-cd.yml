@@ -1,83 +1,100 @@
-name: 'CI/CD Pipeline Modulo 4'
+name: 'CI-CD Multi-Account Microservices'
 
 on:
   push:
     branches:
       - qa
-      - main
 
 jobs:
-  pipeline_distribuido:
-    name: 'CI-CD Multi-Account'
+  build-and-test:
+    name: 'Pruebas y Compilación (Nx)'
     runs-on: ubuntu-latest
-
     steps:
-    - name: Copiar Codigo
-      uses: actions/checkout@v3
+      - name: Copiar Código
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
-    - name: Configurar Node (Requerido para Nx)
-      uses: actions/setup-node@v3
-      with:
-        node-version: 18
+      - name: Configurar Node (Requerido para Nx)
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          cache: 'npm'
 
-    - name: Instalar Nx
-      run: npm install
+      - name: Instalar Dependencias
+        run: npm ci
 
-    - name: Configurar Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Ejecutar Linter y Tests
+        run: |
+          npx nx affected:lint --base=origin/qa~1 --head=origin/qa
+          npx nx affected:test --base=origin/qa~1 --head=origin/qa
 
-    - name: Instalar Dependencias de Test
-      run: |
-        pip install pytest fastapi uvicorn httpx
-        if [ -f academic-risk-service/requirements.txt ]; then pip install -r academic-risk-service/requirements.txt; fi
-        if [ -f notification-service/requirements.txt ]; then pip install -r notification-service/requirements.txt; fi
+      - name: Compilar Aplicaciones Afectadas
+        run: npx nx affected:build --base=origin/qa~1 --head=origin/qa --configuration=production
 
-    
-    
-    
-    - name: Ejecutar Pruebas mediante Nx Graph
-      run: npx nx run-many --target=test
+  docker-push:
+    name: 'Empaquetar y Publicar en DockerHub'
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Copiar Código
+        uses: actions/checkout@v3
 
-    
-    - name: Autenticar en DockerHub
-      uses: docker/login-action@v2
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Autenticar en DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Configurar Variables de Entorno Docker
-      run: |
-        if [ "${{ github.ref }}" = "refs/heads/qa" ]; then
-          echo "TAG=qa" >> $GITHUB_ENV
-        else
-          echo "TAG=prod" >> $GITHUB_ENV
-        fi
+      - name: Configurar Python (Scripts de Soporte)
+        uses: actions/setup-python@v4
+        with:
+          python-python: '3.10'
 
-    - name: Compilar y Subir Imagen - Academic Risk
-      run: |
-        docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} -f academic-risk-service/Dockerfile .
-        docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+      - name: Generar Tag Automático
+        id: vars
+        run: echo "TAG=qa-${GITHUB_SHA::7}" >> $GITHUB_ENV
 
-    - name: Compilar y Subir Imagen - Notification Service
-      run: |
-        docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} -f notification-service/Dockerfile .
-        docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
+      - name: Construir y Subir Imagen Docker
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
 
-    
-  
-    - name: Desplegar en Instancia EC2 via SSH Proxy
-      uses: appleboy/ssh-action@master
-      with:
-        host: '10.0.3.41' 
-        username: 'ec2-user'
-        key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
-        proxy_host: '44.203.12.179' 
-        proxy_username: 'ec2-user'
-        proxy_key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
-        script: |
-          sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
-          sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
-          sudo docker stop risk-service || true && sudo docker rm risk-service || true
-          sudo docker run -d -p 8001:8001 --name risk-service ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+  deploy-qa:
+    name: 'Desplegar en Instancia EC2 via SSH Proxy'
+    needs: docker-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generar Tag de Imagen
+        run: echo "TAG=qa-${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Ejecutar Despliegue sobre Servidor Privado
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.AWS_QA_SERVER_IP }} # Tomará automáticamente la IP de los Secrets (3.223.140.120)
+          username: ec2-user
+          key: ${{ secrets.AWS_PRIVATE_KEY_PEM }} # Su archivo labsuser.pem guardado en los secretos
+
+          proxy_host: '3.223.140.120' # IP estática del Bastion recién creado por Terraform
+          proxy_username: ec2-user
+          proxy_key: ${{ secrets.AWS_PRIVATE_KEY_PEM }}
+
+          script: |
+            echo "===> Conexión SSH Proxy Exitosa a la Instancia Privada <==="
+            
+            sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
+            
+            sudo docker stop risk-service || true
+            sudo docker rm risk-service || true
+            
+            sudo docker image prune -f
+            
+            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+            
+            sudo docker run -d \
+              -p 8001:8000 \
+              --name risk-service \
+              --restart unless-stopped \
+              ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+            
+            echo "===> Despliegue de Módulo 4 Finalizado con Éxito <==="
