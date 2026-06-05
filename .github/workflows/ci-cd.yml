@@ -46,102 +46,86 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Configurar Python (Scripts de Soporte)
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
       - name: Generar Tag Automático
         id: vars
         run: echo "TAG=qa-${GITHUB_SHA::7}" >> $GITHUB_ENV
 
-      - name: Construir y Subir Imagen Docker
+      - name: Construir y Subir Imágenes Afectadas
         run: |
-          docker build \
-            -f academic-risk-service/Dockerfile \
-            -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} .
-          
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+          if npx nx show projects --affected --base=origin/qa~1 --head=origin/qa | grep -q "academic-risk-service"; then
+            echo "===> Empaquetando academic-risk-service... <===="
+            docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} .
+            docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+          fi
+
+          if npx nx show projects --affected --base=origin/qa~1 --head=origin/qa | grep -q "notification-service"; then
+            echo "===> Empaquetando notification-service... <===="
+            docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} .
+            docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
+          fi
 
   deploy-qa:
-    name: 'Desplegar en Instancia EC2 via SSH Proxy'
+    name: 'Desplegar Microservicios en QA via Bastion'
     needs: docker-push
     runs-on: ubuntu-latest
     steps:
       - name: Generar Tag de Imagen
         run: echo "TAG=qa-${GITHUB_SHA::7}" >> $GITHUB_ENV
 
-      - name: Ejecutar Despliegue sobre Servidor Privado
+      - name: Ejecutar Despliegue sobre Servidores Privados
         uses: appleboy/ssh-action@master
         with:
-          # --- Conexión al Bastion Host ---
-          host: '3.223.140.120'
+          host: '44.204.212.133' # IP pública de su Bastion Host
           username: ubuntu 
           key: ${{ secrets.AWS_LLAVE_FRESCA }}
-          
           script: |
             echo "===> Conectado al Bastion Host. Configurando entorno local... <==="
             
-            # 1. INSTALACIÓN AUTOMÁTICA DE DOCKER EN EL BASTION (Tiene internet completo)
+            # 1. Asegurar Docker en el Bastion Host
             if ! command -v docker &> /dev/null; then
-              echo "===> Instalar Docker en el Bastion Host de forma automatica... <==="
-              sudo apt-get update -y
-              sudo apt-get install -y docker.io
-              sudo systemctl start docker
-              sudo systemctl enable docker
+              sudo apt-get update -y && sudo apt-get install -y docker.io
+              sudo systemctl start docker && sudo systemctl enable docker
               sudo usermod -aG docker ubuntu
             fi
             
-            # 2. Crear llave .pem temporal para el salto interno hacia la subnet privada
+            # 2. Crear llave .pem temporal para saltos internos
             echo "${{ secrets.AWS_LLAVE_FRESCA }}" > /tmp/labsuser.pem
             chmod 400 /tmp/labsuser.pem
-            
-            # 3. INSTALACIÓN DE DOCKER EN LA MÁQUINA PRIVADA (Vía binarios estáticos si no existe)
+            sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
+
+            # ==================================================================
+            # FLUJO A: ACADEMIC RISK SERVICE (IP: 10.0.3.249)
+            # ==================================================================
+            echo "===> Desplegando Academic Risk Service Offline... <==="
             if ! ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "command -v docker &>/dev/null"; then
-              echo "===> Descargando binarios de Docker en el Bastion... <==="
               curl -sSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o /tmp/docker.tgz
               scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/docker.tgz ubuntu@10.0.3.249:/tmp/docker.tgz
-              
-              ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 << 'EOF'
-                sudo tar -xzf /tmp/docker.tgz -C /tmp/
-                sudo mv /tmp/docker/* /usr/bin/
-                sudo dockerd > /dev/null 2>&1 &
-                sleep 5
-                echo "===> Docker instalado localmente con éxito <==="
-            EOF
+              ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "sudo tar -xzf /tmp/docker.tgz -C /tmp/ && sudo mv /tmp/docker/* /usr/bin/ && sudo dockerd > /dev/null 2>&1 &"
+              sleep 5
             fi
-            
-            # 4. FLUJO DE TRANSFERENCIA OFFLINE DESDE EL BASTION A LA VPC INTERNA
-            echo "===> Bastion descargando la imagen desde DockerHub... <==="
-            sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
-            
-            echo "===> Empaquetando la imagen a formato tar... <==="
             sudo docker save -o /tmp/risk-service.tar ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
             sudo chmod 644 /tmp/risk-service.tar
-            
-            echo "===> Transfiriendo archivo tar por la red interna hacia la maquina privada... <==="
             scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/risk-service.tar ubuntu@10.0.3.249:/tmp/risk-service.tar
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "sudo docker load -i /tmp/risk-service.tar && sudo docker stop risk-service || true && sudo docker rm risk-service || true && sudo docker run -d -p 8001:8000 --name risk-service ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} && sudo rm -f /tmp/risk-service.tar"
+            sudo rm -f /tmp/risk-service.tar
+
+            # ==================================================================
+            # FLUJO B: NOTIFICATION SERVICE (IP: 10.0.3.222)
+            # ==================================================================
+            echo "===> Desplegando Notification Service Offline... <==="
+            if ! ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "command -v docker &>/dev/null"; then
+              curl -sSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o /tmp/docker.tgz
+              scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/docker.tgz ubuntu@10.0.3.222:/tmp/docker.tgz
+              ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "sudo tar -xzf /tmp/docker.tgz -C /tmp/ && sudo mv /tmp/docker/* /usr/bin/ && sudo dockerd > /dev/null 2>&1 &"
+              sleep 5
+            fi
+            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
+            sudo docker save -o /tmp/notify-service.tar ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
+            sudo chmod 644 /tmp/notify-service.tar
+            scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/notify-service.tar ubuntu@10.0.3.222:/tmp/notify-service.tar
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "sudo docker load -i /tmp/notify-service.tar && sudo docker stop notify-service || true && sudo docker rm notify-service || true && sudo docker run -d -p 8002:8000 --name notify-service ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} && sudo rm -f /tmp/notify-service.tar"
             
-            # 5. CARGA Y DESPLIEGUE EN LA INSTANCIA PRIVADA AISLADA (10.0.3.249)
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 << 'EOF'
-              echo "===> Cargando imagen comprimida en el Docker local... <==="
-              sudo docker load -i /tmp/risk-service.tar
-              
-              echo "===> Limpiando contenedores anteriores... <==="
-              sudo docker stop risk-service || true
-              sudo docker rm risk-service || true
-              
-              echo "===> Encendiendo el Microservicio en el puerto 8001... <==="
-              sudo docker run -d \
-                -p 8001:8000 \
-                --name risk-service \
-                ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
-              
-              rm -f /tmp/risk-service.tar
-              echo "===> ¡Microservicio desplegado de forma 100% offline con éxito! <==="
-            EOF
-            
-            # 6. Limpieza de archivos del Bastion
-            rm -f /tmp/labsuser.pem /tmp/docker.tgz /tmp/risk-service.tar
-            echo "===> Despliegue de Módulo 4 Finalizado con Éxito Extremo <==="
+            # 6. Limpieza final de residuos de seguridad en el Bastion
+            sudo rm -f /tmp/labsuser.pem /tmp/docker.tgz /tmp/notify-service.tar
+            echo "===> Despliegue Multi-Servicio en QA Finalizado con Éxito Extremo <==="
