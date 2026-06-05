@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - qa
+      - main # Escucha producción para automatizar el despliegue dinámico
 
 jobs:
   build-and-test:
@@ -24,13 +25,23 @@ jobs:
       - name: Instalar Dependencias
         run: npm ci
 
+      - name: Definir Base de Comparación Nx
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "NX_BASE=origin/main~1" >> $GITHUB_ENV
+            echo "NX_HEAD=origin/main" >> $GITHUB_ENV
+          else
+            echo "NX_BASE=origin/qa~1" >> $GITHUB_ENV
+            echo "NX_HEAD=origin/qa" >> $GITHUB_ENV
+          fi
+
       - name: Ejecutar Linter y Tests
         run: |
-          npx nx affected:lint --base=origin/qa~1 --head=origin/qa
-          npx nx affected:test --base=origin/qa~1 --head=origin/qa
+          npx nx affected:lint --base=${{ env.NX_BASE }} --head=${{ env.NX_HEAD }}
+          npx nx affected:test --base=${{ env.NX_BASE }} --head=${{ env.NX_HEAD }}
 
       - name: Compilar Aplicaciones Afectadas
-        run: npx nx affected:build --base=origin/qa~1 --head=origin/qa --configuration=production
+        run: npx nx affected:build --base=${{ env.NX_BASE }} --head=${{ env.NX_HEAD }} --configuration=production
 
   docker-push:
     name: 'Empaquetar y Publicar en DockerHub'
@@ -46,20 +57,28 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Generar Tag Automático
-        id: vars
-        run: echo "TAG=qa-${GITHUB_SHA::7}" >> $GITHUB_ENV
+      - name: Definir Tags y Bases de Entorno
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "TAG=prod-latest" >> $GITHUB_ENV
+            echo "NX_BASE=origin/main~1" >> $GITHUB_ENV
+            echo "NX_HEAD=origin/main" >> $GITHUB_ENV
+          else
+            echo "TAG=qa-${GITHUB_SHA::7}" >> $GITHUB_ENV
+            echo "NX_BASE=origin/qa~1" >> $GITHUB_ENV
+            echo "NX_HEAD=origin/qa" >> $GITHUB_ENV
+          fi
 
       - name: Construir y Subir Imágenes Afectadas
         run: |
-          if npx nx show projects --affected --base=origin/qa~1 --head=origin/qa | grep -q "academic-risk-service"; then
-            echo "===> Empaquetando academic-risk-service... <===="
+          if npx nx show projects --affected --base=${{ env.NX_BASE }} --head=${{ env.NX_HEAD }} | grep -q "academic-risk-service"; then
+            echo "===> Empaquetando academic-risk-service para ${{ env.TAG }}... <===="
             docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} .
             docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
           fi
 
-          if npx nx show projects --affected --base=origin/qa~1 --head=origin/qa | grep -q "notification-service"; then
-            echo "===> Empaquetando notification-service... <===="
+          if npx nx show projects --affected --base=${{ env.NX_BASE }} --head=${{ env.NX_HEAD }} | grep -q "notification-service"; then
+            echo "===> Empaquetando notification-service para ${{ env.TAG }}... <===="
             docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} .
             docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
           fi
@@ -67,6 +86,7 @@ jobs:
   deploy-qa:
     name: 'Desplegar Microservicios en QA via Bastion'
     needs: docker-push
+    if: github.ref == 'refs/heads/qa' # Solo se ejecuta si los cambios van a la rama QA
     runs-on: ubuntu-latest
     steps:
       - name: Generar Tag de Imagen
@@ -75,75 +95,74 @@ jobs:
       - name: Ejecutar Despliegue sobre Servidores Privados
         uses: appleboy/ssh-action@master
         with:
-          host: '18.207.148.0' # IP activa de su Bastion
+          host: '18.207.148.0' 
           username: ubuntu 
           key: ${{ secrets.AWS_LLAVE_FRESCA }}
           script: |
             echo "===> Conectado al Bastion Host. Configurando entorno local... <==="
-            
-            # 1. Asegurar Docker en el Bastion Host
             if ! command -v docker &> /dev/null; then
               sudo apt-get update -y && sudo apt-get install -y docker.io
               sudo systemctl start docker && sudo systemctl enable docker
               sudo usermod -aG docker ubuntu
             fi
             
-            # 2. Recrear llave de salto interno (Forzamos borrado previo para evitar Permission Denied)
             sudo rm -f /tmp/labsuser.pem
             echo "${{ secrets.AWS_LLAVE_FRESCA }}" > /tmp/labsuser.pem
             chmod 400 /tmp/labsuser.pem
             sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
 
-            # ==================================================================
-            # FLUJO A: ACADEMIC RISK SERVICE (IP: 10.0.3.249)
-            # ==================================================================
-            echo "===> Verificando disponibilidad de nueva imagen para Risk Service... <==="
+            # Flujo Risk Service
             if sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} 2>/dev/null; then
-              echo "===> Nueva imagen detectada. Preparando entorno en 10.0.3.249... <==="
-              
               if ! ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "command -v docker &>/dev/null"; then
                 curl -sSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o /tmp/docker.tgz
                 scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/docker.tgz ubuntu@10.0.3.249:/tmp/docker.tgz
                 ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "sudo tar -xzf /tmp/docker.tgz -C /tmp/ && sudo mv /tmp/docker/* /usr/bin/ && sudo nohup dockerd > /dev/null 2>&1 &"
                 sleep 5
               fi
-              
               sudo docker save -o /tmp/risk-service.tar ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
               sudo chmod 644 /tmp/risk-service.tar
               scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/risk-service.tar ubuntu@10.0.3.249:/tmp/risk-service.tar
-              
-              # Ejecución directa en una sola línea SSH para evitar errores de sintaxis EOF
               ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "sudo docker load -i /tmp/risk-service.tar && sudo docker stop risk-service || true && sudo docker rm risk-service || true && sudo docker run -d -p 8001:8000 --name risk-service ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} && sudo rm -f /tmp/risk-service.tar"
-              sudo rm -f /tmp/risk-service.tar
-            else
-              echo "No hay actualizaciones de imagen para academic-risk-service en este push."
             fi
 
-            # ==================================================================
-            # FLUJO B: NOTIFICATION SERVICE (IP: 10.0.3.222)
-            # ==================================================================
-            echo "===> Verificando disponibilidad de nueva imagen para Notification Service... <==="
+            # Flujo Notification Service
             if sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} 2>/dev/null; then
-              echo "===> Nueva imagen detectada. Preparando entorno en 10.0.3.222... <==="
-              
               if ! ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "command -v docker &>/dev/null"; then
                 curl -sSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o /tmp/docker.tgz
                 scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/docker.tgz ubuntu@10.0.3.222:/tmp/docker.tgz
                 ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "sudo tar -xzf /tmp/docker.tgz -C /tmp/ && sudo mv /tmp/docker/* /usr/bin/ && sudo nohup dockerd > /dev/null 2>&1 &"
                 sleep 5
               fi
-              
               sudo docker save -o /tmp/notify-service.tar ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
               sudo chmod 644 /tmp/notify-service.tar
               scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/notify-service.tar ubuntu@10.0.3.222:/tmp/notify-service.tar
-              
-              # Ejecución directa en una sola línea SSH para evitar errores de sintaxis EOF
               ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "sudo docker load -i /tmp/notify-service.tar && sudo docker stop notify-service || true && sudo docker rm notify-service || true && sudo docker run -d -p 8002:8000 --name notify-service ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} && sudo rm -f /tmp/notify-service.tar"
-              sudo rm -f /tmp/notify-service.tar
-            else
-              echo "No hay actualizaciones de imagen para notification-service en este push."
             fi
-            
-            # 6. Limpieza final estricta
             sudo rm -f /tmp/labsuser.pem /tmp/docker.tgz /tmp/risk-service.tar /tmp/notify-service.tar || true
-            echo "===> Despliegue Multi-Servicio en QA Finalizado con Éxito Extremo <==="
+
+  deploy-prod:
+    name: 'Refrescar Auto Scaling Group en Producción'
+    needs: docker-push
+    if: github.ref == 'refs/heads/main' # Solo se ejecuta si los cambios van a la rama principal (main)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configurar Credenciales AWS - PROD
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN_PROD }}
+          aws-region: us-east-1
+
+      - name: Forzar Actualización del ASG (Instance Refresh)
+        run: |
+          # Detecta el nombre dinámico del ASG que levantaron con Terraform
+          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?contains(AutoScalingGroupName, 'asg_produccion')].AutoScalingGroupName" --output text)
+          
+          if [ ! -z "$ASG_NAME" ]; then
+            echo "===> Solicitando Instance Refresh para el ASG de producción: $ASG_NAME... <==="
+            aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME"
+          else
+            echo "Error: No se localizó ningún Auto Scaling Group para producción en esta cuenta de AWS."
+            exit 1
+          fi
