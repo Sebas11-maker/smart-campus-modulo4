@@ -74,28 +74,32 @@ jobs:
       - name: Ejecutar Despliegue sobre Servidor Privado
         uses: appleboy/ssh-action@master
         with:
-          # --- Configuración del Bastion Host (Puerta de Entrada) ---
+          # --- 1. Conexión al Bastion Host (Amazon Linux) ---
           host: ${{ secrets.AWS_QA_SERVER_IP }}
           username: ec2-user
-          key: ${{ secrets.AWS_SSH_PRIVATE_KEY }} # CORRECCIÓN: Nombre exacto de tu secreto en GitHub
+          key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
 
-          # --- Configuración del Salto SSH Proxy (Instancia Privada) ---
-          proxy_host: '3.223.140.120'
-          proxy_username: ec2-user
-          proxy_key: ${{ secrets.AWS_SSH_PRIVATE_KEY }} # CORRECCIÓN: Nombre exacto de tu secreto en GitHub
+          # --- 2. Conexión Proxy a la Instancia Privada (Ubuntu) ---
+          proxy_host: '10.0.3.249'
+          proxy_username: ubuntu
+          proxy_key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
 
-          # --- Comandos en la instancia interna (10.0.3.41) ---
+          # --- 3. Comandos de Despliegue en la Instancia Interna ---
           script: |
-            echo "===> Conexión SSH Proxy Exitosa a la Instancia Privada <==="
+            echo "===> Conexión SSH Proxy Exitosa a la Instancia Privada de QA <==="
             
+            # Autenticarse en DockerHub
             sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
             
+            # Detener y limpiar el contenedor previo
             sudo docker stop risk-service || true
             sudo docker rm risk-service || true
             sudo docker image prune -f
             
+            # Descargar la nueva imagen construida por Nx
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
             
+            # Encender el microservicio mapeando el puerto externo de QA al interno de la App
             sudo docker run -d \
               -p 8001:8000 \
               --name risk-service \
