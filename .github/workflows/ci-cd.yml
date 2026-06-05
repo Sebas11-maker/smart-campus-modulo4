@@ -56,12 +56,16 @@ jobs:
             echo "===> Empaquetando academic-risk-service... <===="
             docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} .
             docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+          else
+            echo "academic-risk-service no sufrio cambios en este commit."
           fi
 
           if npx nx show projects --affected --base=origin/qa~1 --head=origin/qa | grep -q "notification-service"; then
             echo "===> Empaquetando notification-service... <===="
             docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} .
             docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
+          else
+            echo "notification-service no sufrio cambios en este commit."
           fi
 
   deploy-qa:
@@ -75,10 +79,10 @@ jobs:
       - name: Ejecutar Despliegue sobre Servidores Privados
         uses: appleboy/ssh-action@master
         with:
-          # --- CORRECCIÓN: IP pública del Bastion Host actualizada ---
-          host: '18.207.148.0'
+          host: '18.207.148.0' # IP de su Bastion activa
           username: ubuntu 
           key: ${{ secrets.AWS_LLAVE_FRESCA }}
+          command_timeout: 15m # Extendemos el margen de maniobra por si acaso
           script: |
             echo "===> Conectado al Bastion Host. Configurando entorno local... <==="
             
@@ -95,38 +99,70 @@ jobs:
             sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
 
             # ==================================================================
-            # FLUJO A: ACADEMIC RISK SERVICE (IP Fija: 10.0.3.249)
+            # FLUJO A: ACADEMIC RISK SERVICE (IP: 10.0.3.249)
             # ==================================================================
-            echo "===> Desplegando Academic Risk Service Offline... <==="
-            if ! ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "command -v docker &>/dev/null"; then
-              curl -sSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o /tmp/docker.tgz
-              scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/docker.tgz ubuntu@10.0.3.249:/tmp/docker.tgz
-              ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "sudo tar -xzf /tmp/docker.tgz -C /tmp/ && sudo mv /tmp/docker/* /usr/bin/ && sudo dockerd > /dev/null 2>&1 &"
-              sleep 5
+            echo "===> Verificando disponibilidad de nueva imagen para Risk Service... <==="
+            if sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} 2>/dev/null; then
+              echo "===> Nueva imagen detectada. Iniciando despliegue offline... <==="
+              
+              # Instalar docker estático en la máquina interna si no existe
+              if ! ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "command -v docker &>/dev/null"; then
+                curl -sSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o /tmp/docker.tgz
+                scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/docker.tgz ubuntu@10.0.3.249:/tmp/docker.tgz
+                ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "sudo tar -xzf /tmp/docker.tgz -C /tmp/ && sudo mv /tmp/docker/* /usr/bin/ && sudo nohup dockerd > /dev/null 2>&1 &"
+                sleep 5
+              fi
+              
+              sudo docker save -o /tmp/risk-service.tar ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+              sudo chmod 644 /tmp/risk-service.tar
+              scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/risk-service.tar ubuntu@10.0.3.249:/tmp/risk-service.tar
+              
+              ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 << 'EOF'
+                sudo docker load -i /tmp/risk-service.tar
+                sudo docker stop risk-service || true
+                sudo docker rm risk-service || true
+                sudo docker run -d -p 8001:8000 --name risk-service ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+                sudo rm -f /tmp/risk-service.tar
+              EOF
+              sudo rm -f /tmp/risk-service.tar
+            else
+              echo "No hay actualizaciones de imagen para academic-risk-service en este commit. Saltando."
             fi
-            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
-            sudo docker save -o /tmp/risk-service.tar ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
-            sudo chmod 644 /tmp/risk-service.tar
-            scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/risk-service.tar ubuntu@10.0.3.249:/tmp/risk-service.tar
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "sudo docker load -i /tmp/risk-service.tar && sudo docker stop risk-service || true && sudo docker rm risk-service || true && sudo docker run -d -p 8001:8000 --name risk-service ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} && sudo rm -f /tmp/risk-service.tar"
-            sudo rm -f /tmp/risk-service.tar
 
             # ==================================================================
-            # FLUJO B: NOTIFICATION SERVICE (IP Fija: 10.0.3.222)
+            # FLUJO B: NOTIFICATION SERVICE (IP: 10.0.3.222)
             # ==================================================================
-            echo "===> Desplegando Notification Service Offline... <==="
-            if ! ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "command -v docker &>/dev/null"; then
-              curl -sSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o /tmp/docker.tgz
-              scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/docker.tgz ubuntu@10.0.3.222:/tmp/docker.tgz
-              ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "sudo tar -xzf /tmp/docker.tgz -C /tmp/ && sudo mv /tmp/docker/* /usr/bin/ && sudo dockerd > /dev/null 2>&1 &"
-              sleep 5
+            echo "===> Verificando disponibilidad de nueva imagen para Notification Service... <==="
+            if sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} 2>/dev/null; then
+              echo "===> Nueva imagen detectada. Iniciando despliegue offline... <==="
+              
+              # Instalar docker estático en la máquina de notificaciones si no existe (con nohup para evitar bloqueos)
+              if ! ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "command -v docker &>/dev/null"; then
+                echo "Instalando entorno Docker local en instancia 10.0.3.222..."
+                curl -sSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o /tmp/docker.tgz
+                scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/docker.tgz ubuntu@10.0.3.222:/tmp/docker.tgz
+                ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "sudo tar -xzf /tmp/docker.tgz -C /tmp/ && sudo mv /tmp/docker/* /usr/bin/ && sudo nohup dockerd > /dev/null 2>&1 &"
+                sleep 5
+              fi
+              
+              sudo docker save -o /tmp/notify-service.tar ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
+              sudo chmod 644 /tmp/notify-service.tar
+              scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/notify-service.tar ubuntu@10.0.3.222:/tmp/notify-service.tar
+              
+              ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 << 'EOF'
+                sudo docker load -i /tmp/notify-service.tar
+                sudo docker stop notify-service || true
+                sudo docker rm notify-service || true
+                sudo docker run -d -p 8002:8000 --name notify-service ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
+                sudo rm -f /tmp/notify-service.tar
+              EOF
+              sudo rm -f /tmp/notify-service.tar
+            else
+              # Si no hay imagen nueva en DockerHub, de todas formas forzamos la primera inicialización si quieren probar el flujo
+              echo "No hay cambios recientes en el codigo de notification-service."
+              echo "Para forzar un despliegue completo, recuerden hacer un cambio menor (un espacio o comentario) en el codigo del servicio de notificaciones."
             fi
-            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
-            sudo docker save -o /tmp/notify-service.tar ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
-            sudo chmod 644 /tmp/notify-service.tar
-            scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/notify-service.tar ubuntu@10.0.3.222:/tmp/notify-service.tar
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "sudo docker load -i /tmp/notify-service.tar && sudo docker stop notify-service || true && sudo docker rm notify-service || true && sudo docker run -d -p 8002:8000 --name notify-service ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} && sudo rm -f /tmp/notify-service.tar"
             
             # 6. Limpieza final de residuos de seguridad en el Bastion
-            sudo rm -f /tmp/labsuser.pem /tmp/docker.tgz /tmp/notify-service.tar
+            sudo rm -f /tmp/labsuser.pem /tmp/docker.tgz /tmp/risk-service.tar /tmp/notify-service.tar || true
             echo "===> Despliegue Multi-Servicio en QA Finalizado con Éxito Extremo <==="
