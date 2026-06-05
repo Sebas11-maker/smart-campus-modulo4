@@ -74,36 +74,45 @@ jobs:
       - name: Ejecutar Despliegue sobre Servidor Privado
         uses: appleboy/ssh-action@master
         with:
-          # --- 1. Conexión al Bastion Host (Amazon Linux) ---
+          # --- Conexión directa y única al Bastion Host ---
           host: ${{ secrets.AWS_QA_SERVER_IP }}
           username: ec2-user
           key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
-
-          # --- 2. Conexión Proxy a la Instancia Privada (Ubuntu) ---
-          proxy_host: '10.0.3.249'
-          proxy_username: ubuntu
-          proxy_key: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
-
-          # --- 3. Comandos de Despliegue en la Instancia Interna ---
+          script_stop: true
+          
+          # --- El Bastion es el que salta nativamente a la máquina privada ---
           script: |
-            echo "===> Conexión SSH Proxy Exitosa a la Instancia Privada de QA <==="
+            echo "===> Conectado al Bastion Host. Iniciando salto interno... <==="
             
-            # Autenticarse en DockerHub
-            sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
+            # 1. Crear el archivo de clave temporal dentro del Bastion para el salto interno
+            echo "${{ secrets.AWS_SSH_PRIVATE_KEY }}" > /tmp/labsuser.pem
+            chmod 400 /tmp/labsuser.pem
             
-            # Detener y limpiar el contenedor previo
-            sudo docker stop risk-service || true
-            sudo docker rm risk-service || true
-            sudo docker image prune -f
+            # 2. Ejecutar los comandos de Docker de forma remota inyectándolos por SSH hacia Ubuntu
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 << 'EOF'
+              echo "===> Conexión Exitosa dentro de la Instancia Privada de QA <==="
+              
+              # Autenticarse en DockerHub
+              sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
+              
+              # Detener y limpiar contenedores viejos
+              sudo docker stop risk-service || true
+              sudo docker rm risk-service || true
+              sudo docker image prune -f
+              
+              # Descargar la nueva imagen
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+              
+              # Encender el microservicio en el puerto correspondiente
+              sudo docker run -d \
+                -p 8001:8000 \
+                --name risk-service \
+                --restart unless-stopped \
+                ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
+              
+              echo "===> Microservicio corriendo en el puerto 8001 con éxito <==="
+            EOF
             
-            # Descargar la nueva imagen construida por Nx
-            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
-            
-            # Encender el microservicio mapeando el puerto externo de QA al interno de la App
-            sudo docker run -d \
-              -p 8001:8000 \
-              --name risk-service \
-              --restart unless-stopped \
-              ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
-            
+            # 3. Limpiar la llave temporal del Bastion por seguridad
+            rm -f /tmp/labsuser.pem
             echo "===> Despliegue de Módulo 4 Finalizado con Éxito <==="
