@@ -3,7 +3,7 @@ name: 'CI-CD Multi-Account Microservices Unified'
 on:
   push:
     branches:
-      - qa # Todo se ejecuta desde QA para acelerar las pruebas en caliente
+      - qa # Todo se centraliza en QA para pruebas y despliegues ágiles en caliente
 
 jobs:
   build-and-test:
@@ -72,12 +72,12 @@ jobs:
       - name: Ejecutar Despliegue sobre Servidores Privados de QA
         uses: appleboy/ssh-action@master
         with:
-          host: '32.192.25.178' # CORRECCIÓN: IP pública activa de su Bastion Host de QA
+          host: '32.192.25.178' # IP pública activa de su Bastion Host de QA
           username: ubuntu 
-          key: ${{ secrets.AWS_LLAVE_FRESCA }}
+          key: ${{ secrets.AWS_LLAVE_QA }} # Usa la llave exclusiva del laboratorio de QA
           script: |
             sudo rm -f /tmp/labsuser.pem
-            echo "${{ secrets.AWS_LLAVE_FRESCA }}" > /tmp/labsuser.pem
+            echo "${{ secrets.AWS_LLAVE_QA }}" > /tmp/labsuser.pem
             chmod 400 /tmp/labsuser.pem
             sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
 
