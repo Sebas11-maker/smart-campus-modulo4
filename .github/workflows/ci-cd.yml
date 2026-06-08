@@ -3,7 +3,7 @@ name: 'CI-CD Multi-Account Microservices Unified'
 on:
   push:
     branches:
-      - qa # Todo se centraliza en QA para pruebas y despliegues ágiles en caliente
+      - qa # Centralizado en la rama qa para agilizar despliegues paralelos
 
 jobs:
   build-and-test:
@@ -74,18 +74,20 @@ jobs:
         with:
           host: '32.192.25.178' # IP pública activa de su Bastion Host de QA
           username: ubuntu 
-          key: ${{ secrets.AWS_LLAVE_QA }} # Usa la llave exclusiva del laboratorio de QA
+          key: ${{ secrets.AWS_LLAVE_QA }} # Llave exclusiva del laboratorio de QA
           script: |
             sudo rm -f /tmp/labsuser.pem
             echo "${{ secrets.AWS_LLAVE_QA }}" > /tmp/labsuser.pem
             chmod 400 /tmp/labsuser.pem
-            sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
+            
+            # Autenticación interna para descargar del DockerHub de Xavier
+            sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}" || true
 
             # Despliegue Risk Service en Instancia EC2 de QA (Usando tag qa-latest)
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest && sudo docker stop risk-service || true && sudo docker rm risk-service || true && sudo docker run -d -p 8001:8000 --name risk-service ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest"
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "sudo /usr/local/bin/docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest && sudo /usr/local/bin/docker stop risk-service || true && sudo /usr/local/bin/docker rm risk-service || true && sudo /usr/local/bin/docker run -d -p 8001:8000 --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest"
 
             # Despliegue Notification Service en Instancia EC2 de QA (Usando tag qa-latest)
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest && sudo docker stop notify-service || true && sudo docker rm notify-service || true && sudo docker run -d -p 8002:8000 --name notify-service ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest"
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "sudo /usr/local/bin/docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest && sudo /usr/local/bin/docker stop notify-service || true && sudo /usr/local/bin/docker rm notify-service || true && sudo /usr/local/bin/docker run -d -p 8002:8000 --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest"
             
             sudo rm -f /tmp/labsuser.pem
 
@@ -104,10 +106,14 @@ jobs:
 
       - name: Forzar Actualización de Instancias Productivas (Instance Refresh)
         run: |
-          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?contains(AutoScalingGroupName, 'asg_produccion')].AutoScalingGroupName" --output text)
-          if [ ! -z "$ASG_NAME" ]; then
-            echo "===> Refrescando ASG de Producción para descargar imágenes :prod-latest automáticamente... <==="
+          # CORRECCIÓN DE QUERY: Localiza el ASG en AWS usando el TagName estricto definido en el main.tf
+          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Name' && Value=='Microservice-Prod-Instance']].AutoScalingGroupName" --output text)
+          
+          if [ ! -z "$ASG_NAME" ] && [ "$ASG_NAME" != "None" ]; then
+            echo "===> ¡ASG Productivo Detectado!: $ASG_NAME <==="
+            echo "===> Iniciando Instance Refresh para desplegar imágenes :prod-latest... <==="
             aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME"
           else
-            echo "Alerta: No se encontró un ASG activo en la cuenta de producción de AWS."
+            echo "Error Crítico: No se encontró un ASG activo con el Tag 'Microservice-Prod-Instance' en la cuenta de producción."
+            exit 1
           fi
