@@ -3,7 +3,7 @@ name: 'CI-CD Multi-Account Microservices Unified'
 on:
   push:
     branches:
-      - qa 
+      - qa # Todo se ejecuta desde QA para acelerar las pruebas en caliente
 
 jobs:
   build-and-test:
@@ -46,7 +46,6 @@ jobs:
 
       - name: Construir y Subir Imágenes Duales
         run: |
-          
           echo "===> Empaquetando ACADEMIC-RISK-SERVICE <==="
           # 1. Imagen para el entorno de QA
           docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest .
@@ -73,7 +72,7 @@ jobs:
       - name: Ejecutar Despliegue sobre Servidores Privados de QA
         uses: appleboy/ssh-action@master
         with:
-          host: '18.207.148.0' # IP de su Bastion Host de QA
+          host: '32.192.25.178' # CORRECCIÓN: IP pública activa de su Bastion Host de QA
           username: ubuntu 
           key: ${{ secrets.AWS_LLAVE_FRESCA }}
           script: |
