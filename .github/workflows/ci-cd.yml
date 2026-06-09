@@ -111,4 +111,11 @@ jobs:
           
           if [ ! -z "$ASG_NAME" ] && [ "$ASG_NAME" != "None" ]; then
             echo "===> ¡ASG Productivo Detectado!: $ASG_NAME <==="
-            echo "===> Ejecutando comando
+            echo "===> Ejecutando comando de Instance Refresh para imágenes :prod-latest... <==="
+            
+            # CORRECCIÓN DE COMILLAS: Usamos comillas simples para evitar romper el string de Bash
+            aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME" || echo 'Aviso: El ASG ya se esta actualizando. Continuando sin interrumpir...'
+          else
+            echo "Error Crítico: No se encontró un ASG activo con el Tag 'Microservice-Prod-Instance' en la cuenta de producción."
+            exit 1
+          fi
