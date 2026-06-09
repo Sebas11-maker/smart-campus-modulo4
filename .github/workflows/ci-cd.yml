@@ -3,7 +3,7 @@ name: 'CI-CD Multi-Account Microservices Unified'
 on:
   push:
     branches:
-      - qa # Centralizado en la rama qa para agilizar despliegues paralelos
+      - qa 
 
 jobs:
   build-and-test:
@@ -46,23 +46,31 @@ jobs:
 
       - name: Construir y Subir Imágenes Duales
         run: |
+
           echo "===> Empaquetando ACADEMIC-RISK-SERVICE <==="
-          # 1. Imagen para el entorno de QA
+
+
           docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest .
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
-          
-          # 2. Imagen para el entorno de PRODUCCIÓN
+
           docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod-latest .
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod-latest
 
           echo "===> Empaquetando NOTIFICATION-SERVICE <==="
-          # 1. Imagen para el entorno de QA
+
+
           docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest .
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
-          
-          # 2. Imagen para el entorno de PRODUCCIÓN
+
           docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod-latest .
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod-latest
+
+          echo "===> Empaquetando TRACKING-SERVICE (3er Microservicio) <==="
+          # Requerimiento: Generación automática de dos imágenes en DockerHub por cada elemento
+          docker build -f tracking-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
+          docker build -f tracking-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod-latest .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod-latest
 
   deploy-qa:
     name: 'Desplegar en Entorno QA (Instancias EC2 Fijas)'
@@ -72,22 +80,25 @@ jobs:
       - name: Ejecutar Despliegue sobre Servidores Privados de QA
         uses: appleboy/ssh-action@master
         with:
-          host: '100.53.45.232' # IP pública activa de su Bastion Host de QA
+          host: '100.53.45.232' 
           username: ubuntu 
-          key: ${{ secrets.AWS_LLAVE_QA }} # Llave exclusiva del laboratorio de QA
+          key: ${{ secrets.AWS_LLAVE_QA }} 
           script: |
             sudo rm -f /tmp/labsuser.pem
             echo "${{ secrets.AWS_LLAVE_QA }}" > /tmp/labsuser.pem
             chmod 400 /tmp/labsuser.pem
             
-            # Autenticación interna opcional para descargar del DockerHub de Xavier
+
             sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}" || true
 
-            # Despliegue Risk Service en Instancia EC2 de QA (Usando tag qa-latest)
+            # Despliegue 1: Risk Service (10.0.3.249)
             ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "sudo /usr/local/bin/docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest && sudo /usr/local/bin/docker stop risk-service || true && sudo /usr/local/bin/docker rm risk-service || true && sudo /usr/local/bin/docker run -d -p 8001:8000 --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest"
 
-            # Despliegue Notification Service en Instancia EC2 de QA (Usando tag qa-latest)
+            # Despliegue 2: Notification Service (10.0.3.222)
             ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "sudo /usr/local/bin/docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest && sudo /usr/local/bin/docker stop notify-service || true && sudo /usr/local/bin/docker rm notify-service || true && sudo /usr/local/bin/docker run -d -p 8002:8000 --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest"
+
+            # Despliegue 3: Tracking Service (IP Privada Validada: 10.0.3.162)
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.162 "sudo /usr/local/bin/docker pull ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest && sudo /usr/local/bin/docker stop tracking-service || true && sudo /usr/local/bin/docker rm tracking-service || true && sudo /usr/local/bin/docker run -d -p 8003:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest"
             
             sudo rm -f /tmp/labsuser.pem
 
@@ -106,14 +117,10 @@ jobs:
 
       - name: Forzar Actualización de Instancias Productivas (Instance Refresh)
         run: |
-
           ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Name' && Value=='Microservice-Prod-Instance']].AutoScalingGroupName" --output text)
           
           if [ ! -z "$ASG_NAME" ] && [ "$ASG_NAME" != "None" ]; then
             echo "===> ¡ASG Productivo Detectado!: $ASG_NAME <==="
-            echo "===> Ejecutando comando de Instance Refresh para imágenes :prod-latest... <==="
-            
-
             aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME" || echo 'Aviso: El ASG ya se esta actualizando. Continuando sin interrumpir...'
           else
             echo "Error Crítico: No se encontró un ASG activo con el Tag 'Microservice-Prod-Instance' en la cuenta de producción."
