@@ -106,14 +106,14 @@ jobs:
 
       - name: Forzar Actualización de Instancias Productivas (Instance Refresh)
         run: |
-          # Query de búsqueda mediante Tags físicos definidos en el main.tf
+
           ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Name' && Value=='Microservice-Prod-Instance']].AutoScalingGroupName" --output text)
           
           if [ ! -z "$ASG_NAME" ] && [ "$ASG_NAME" != "None" ]; then
             echo "===> ¡ASG Productivo Detectado!: $ASG_NAME <==="
             echo "===> Ejecutando comando de Instance Refresh para imágenes :prod-latest... <==="
             
-            # CORRECCIÓN DE COMILLAS: Usamos comillas simples para evitar romper el string de Bash
+
             aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME" || echo 'Aviso: El ASG ya se esta actualizando. Continuando sin interrumpir...'
           else
             echo "Error Crítico: No se encontró un ASG activo con el Tag 'Microservice-Prod-Instance' en la cuenta de producción."
