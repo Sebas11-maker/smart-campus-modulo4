@@ -72,7 +72,7 @@ jobs:
       - name: Ejecutar Despliegue sobre Servidores Privados de QA
         uses: appleboy/ssh-action@master
         with:
-          host: '32.192.25.178' # IP pública activa de su Bastion Host de QA
+          host: '100.53.45.232' # CORRECCIÓN: IP pública activa de su Bastion Host de QA
           username: ubuntu 
           key: ${{ secrets.AWS_LLAVE_QA }} # Llave exclusiva del laboratorio de QA
           script: |
@@ -106,7 +106,7 @@ jobs:
 
       - name: Forzar Actualización de Instancias Productivas (Instance Refresh)
         run: |
-          # CORRECCIÓN DE QUERY: Localiza el ASG en AWS usando el TagName estricto definido en el main.tf
+          # Query de búsqueda mediante Tags físicos definidos en el main.tf
           ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Name' && Value=='Microservice-Prod-Instance']].AutoScalingGroupName" --output text)
           
           if [ ! -z "$ASG_NAME" ] && [ "$ASG_NAME" != "None" ]; then
