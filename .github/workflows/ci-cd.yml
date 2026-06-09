@@ -72,7 +72,7 @@ jobs:
       - name: Ejecutar Despliegue sobre Servidores Privados de QA
         uses: appleboy/ssh-action@master
         with:
-          host: '100.53.45.232' # CORRECCIÓN: IP pública activa de su Bastion Host de QA
+          host: '100.53.45.232' # IP pública activa de su Bastion Host de QA
           username: ubuntu 
           key: ${{ secrets.AWS_LLAVE_QA }} # Llave exclusiva del laboratorio de QA
           script: |
@@ -80,7 +80,7 @@ jobs:
             echo "${{ secrets.AWS_LLAVE_QA }}" > /tmp/labsuser.pem
             chmod 400 /tmp/labsuser.pem
             
-            # Autenticación interna para descargar del DockerHub de Xavier
+            # Autenticación interna opcional para descargar del DockerHub de Xavier
             sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}" || true
 
             # Despliegue Risk Service en Instancia EC2 de QA (Usando tag qa-latest)
@@ -111,9 +111,4 @@ jobs:
           
           if [ ! -z "$ASG_NAME" ] && [ "$ASG_NAME" != "None" ]; then
             echo "===> ¡ASG Productivo Detectado!: $ASG_NAME <==="
-            echo "===> Iniciando Instance Refresh para desplegar imágenes :prod-latest... <==="
-            aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME"
-          else
-            echo "Error Crítico: No se encontró un ASG activo con el Tag 'Microservice-Prod-Instance' en la cuenta de producción."
-            exit 1
-          fi
+            echo "===> Ejecutando comando
