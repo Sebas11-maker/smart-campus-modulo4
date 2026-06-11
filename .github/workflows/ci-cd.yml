@@ -3,7 +3,7 @@ name: 'CI-CD Multi-Account Microservices Unified'
 on:
   push:
     branches:
-      - qa # Rama centralizada para el entorno de QA
+      - qa # Centralizado en la rama qa para construir y solucionar todo de golpe
 
 jobs:
   build-and-test:
@@ -95,7 +95,7 @@ jobs:
           username: ubuntu 
           key: ${{ secrets.AWS_LLAVE_QA }}
           script: |
-            # 1. Preparar llave en la home del Bastion
+            # 1. Preparar llave en la home del Bastion (~/) con permisos seguros
             rm -f ~/labsuser.pem
             echo "${{ secrets.AWS_LLAVE_QA }}" > ~/labsuser.pem
             chmod 400 ~/labsuser.pem
@@ -113,10 +113,10 @@ jobs:
 
             # === MICROSERVICIO 1: RISK SERVICE ===
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
-            sudo docker save -o /tmp/risk.tar ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
+            sudo docker save -o ~/risk.tar ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
             
             scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/docker-static.tgz ec2-user@${{ env.INTERNAL_RISK_IP }}:/tmp/
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no /tmp/risk.tar ec2-user@${{ env.INTERNAL_RISK_IP }}:/tmp/
+            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/risk.tar ec2-user@${{ env.INTERNAL_RISK_IP }}:/tmp/
             
             ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_RISK_IP }} "
               if ! command -v docker &> /dev/null; then
@@ -136,10 +136,10 @@ jobs:
 
             # === MICROSERVICIO 2: NOTIFICATION SERVICE ===
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
-            sudo docker save -o /tmp/notify.tar ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
+            sudo docker save -o ~/notify.tar ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
             
             scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/docker-static.tgz ec2-user@${{ env.INTERNAL_NOTIFY_IP }}:/tmp/
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no /tmp/notify.tar ec2-user@${{ env.INTERNAL_NOTIFY_IP }}:/tmp/
+            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/notify.tar ec2-user@${{ env.INTERNAL_NOTIFY_IP }}:/tmp/
             
             ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_NOTIFY_IP }} "
               if ! command -v docker &> /dev/null; then
@@ -159,10 +159,10 @@ jobs:
 
             # === MICROSERVICIO 3: TRACKING SERVICE ===
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
-            sudo docker save -o /tmp/tracking.tar ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
+            sudo docker save -o ~/tracking.tar ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
             
             scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/docker-static.tgz ec2-user@${{ env.INTERNAL_TRACKING_IP }}:/tmp/
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no /tmp/tracking.tar ec2-user@${{ env.INTERNAL_TRACKING_IP }}:/tmp/
+            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/tracking.tar ec2-user@${{ env.INTERNAL_TRACKING_IP }}:/tmp/
             
             ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_TRACKING_IP }} "
               if ! command -v docker &> /dev/null; then
@@ -180,9 +180,9 @@ jobs:
               rm -f /tmp/tracking.tar /tmp/docker-static.tgz
             "
 
-            # Limpieza del Bastion
+            # Limpieza total en el Bastion
             rm -f ~/labsuser.pem
-            sudo rm -f /tmp/*.tar
+            rm -f ~/*.tar
 
   deploy-prod:
     name: 'Desplegar en Entorno PROD (Auto Scaling Group)'
@@ -203,7 +203,7 @@ jobs:
           
           if [ ! -z "$ASG_NAME" ] && [ "$ASG_NAME" != "None" ]; then
             echo "===> ¡ASG Productivo Detectado de forma anticipada!: $ASG_NAME <==="
-            aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME" || echo 'Aviso: El ASG ya se está actualizando. Continuing...'
+            aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME" || echo 'Aviso: El ASG ya se está actualizando. Continuando...'
           else
             echo "Aviso: Si es la primera vez que corre Terraform, el ASG se creará en paralelo. Ignorando temporalmente para evitar bloqueos."
           fi
