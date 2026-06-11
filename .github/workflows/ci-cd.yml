@@ -60,6 +60,7 @@ jobs:
           echo "===> Empaquetando TRACKING-SERVICE <==="
           docker build -f tracking-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest .
           docker build -f tracking-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod-latest .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest # Corregido al tag del servicio correspondiente si aplica, o tracking-service según su estructura interna
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod-latest
 
@@ -95,33 +96,19 @@ jobs:
           username: ubuntu 
           key: ${{ secrets.AWS_LLAVE_QA }}
           script: |
-            # Creamos el archivo de llave de forma segura dentro del Bastion
             sudo rm -f /tmp/labsuser.pem
             echo "${{ secrets.AWS_LLAVE_QA }}" > /tmp/labsuser.pem
             chmod 400 /tmp/labsuser.pem
             
-            # 1. Despliegue del Servicio de Riesgo Académico (Security)
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_RISK_IP }} << 'EOF'
-              sudo docker stop risk-service || true
-              sudo docker rm risk-service || true
-              sudo docker run -d -p 8000:8000 --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
-            EOF
+            # 1. Despliegue directo e inline para el Servicio de Riesgo Académico
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_RISK_IP }} "sudo docker stop risk-service || true; sudo docker rm risk-service || true; sudo docker run -d -p 8000:8000 --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest"
 
-            # 2. Despliegue del Servicio de Notificaciones
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_NOTIFY_IP }} << 'EOF'
-              sudo docker stop notify-service || true
-              sudo docker rm notify-service || true
-              sudo docker run -d -p 8000:8000 --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
-            EOF
+            # 2. Despliegue directo e inline para el Servicio de Notificaciones
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_NOTIFY_IP }} "sudo docker stop notify-service || true; sudo docker rm notify-service || true; sudo docker run -d -p 8000:8000 --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest"
 
-            # 3. Despliegue del Servicio de Rastreo de Activos (Tracking)
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_TRACKING_IP }} << 'EOF'
-              sudo docker stop tracking-service || true
-              sudo docker rm tracking-service || true
-              sudo docker run -d -p 8000:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
-            EOF
+            # 3. Despliegue directo e inline para el Servicio de Rastreo (Tracking)
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_TRACKING_IP }} "sudo docker stop tracking-service || true; sudo docker rm tracking-service || true; sudo docker run -d -p 8000:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest"
             
-            # Limpieza total de llaves temporales dentro del Bastion
             sudo rm -f /tmp/labsuser.pem
 
   deploy-prod:
