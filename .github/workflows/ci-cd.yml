@@ -99,14 +99,14 @@ jobs:
             echo "${{ secrets.AWS_LLAVE_QA }}" > /tmp/labsuser.pem
             chmod 400 /tmp/labsuser.pem
             
-            # 1. Despliegue directo, inline y atómico para el Servicio de Riesgo Académico
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_RISK_IP }} "sudo docker stop risk-service || true; sudo docker rm risk-service || true; sudo docker run -d -p 8000:8000 --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest"
+            # 1. Despliegue directo, inline y atómico usando ec2-user (Amazon Linux 2023)
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_RISK_IP }} "sudo docker stop risk-service || true; sudo docker rm risk-service || true; sudo docker run -d -p 8000:8000 --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest"
 
-            # 2. Despliegue directo e inline para el Servicio de Notificaciones
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_NOTIFY_IP }} "sudo docker stop notify-service || true; sudo docker rm notify-service || true; sudo docker run -d -p 8000:8000 --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest"
+            # 2. Despliegue directo, inline y atómico usando ec2-user (Amazon Linux 2023)
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_NOTIFY_IP }} "sudo docker stop notify-service || true; sudo docker rm notify-service || true; sudo docker run -d -p 8000:8000 --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest"
 
-            # 3. Despliegue directo e inline para el Servicio de Rastreo (Tracking)
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_TRACKING_IP }} "sudo docker stop tracking-service || true; sudo docker rm tracking-service || true; sudo docker run -d -p 8000:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest"
+            # 3. Despliegue directo, inline y atómico usando ec2-user (Amazon Linux 2023)
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_TRACKING_IP }} "sudo docker stop tracking-service || true; sudo docker rm tracking-service || true; sudo docker run -d -p 8000:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest"
             
             sudo rm -f /tmp/labsuser.pem
 
