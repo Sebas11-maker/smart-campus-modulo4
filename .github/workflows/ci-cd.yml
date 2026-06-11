@@ -95,94 +95,47 @@ jobs:
           username: ubuntu 
           key: ${{ secrets.AWS_LLAVE_QA }}
           script: |
-            # 1. Limpiar y preparar la llave privada en la home del Bastion
+            # 1. Asegurar la llave privada en la Home del Bastion
             rm -f ~/labsuser.pem
             echo "${{ secrets.AWS_LLAVE_QA }}" > ~/labsuser.pem
             chmod 400 ~/labsuser.pem
             
-            # 2. Asegurar Docker en el Bastion (Fábrica perimetral)
+            # 2. Validar que el Bastion tenga instalado docker para empaquetar
             if ! command -v docker &> /dev/null; then
               sudo apt update && sudo apt install -y docker.io
               sudo usermod -aG docker ubuntu
             fi
 
-            # 3. Descargar el instalador estático de Docker una sola vez si no existe
-            if [ ! -f ~/docker-static.tgz ]; then
-              curl -L https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o ~/docker-static.tgz
-            fi
-
-            # === AUTOMATIZACIÓN MICROSERVICIO 1: RISK SERVICE ===
+            # === MICROSERVICIO 1: RISK SERVICE (Piping directo a Containerd) ===
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
-            sudo docker save -o ~/risk.tar ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
             
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/docker-static.tgz ec2-user@${{ env.INTERNAL_RISK_IP }}:/tmp/
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/risk.tar ec2-user@${{ env.INTERNAL_RISK_IP }}:/tmp/
+            ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_RISK_IP }} "sudo ctr --namespace=moby tasks kill risk-service || true; sudo ctr --namespace=moby containers rm risk-service || true"
             
-            ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_RISK_IP }} "
-              if ! command -v docker &> /dev/null; then
-                tar -xzf /tmp/docker-static.tgz -C /tmp/
-                sudo cp /tmp/docker/* /usr/bin/
-                sudo mkdir -p /etc/docker
-                echo '{\"iptables\": false}' | sudo tee /etc/docker/daemon.json
-                sudo dockerd > /dev/null 2>&1 &
-                sleep 5
-              fi
-              sudo docker stop risk-service || true
-              sudo docker rm risk-service || true
-              sudo docker load -i /tmp/risk.tar
-              sudo docker run -d --net=host --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
-              rm -f /tmp/risk.tar /tmp/docker-static.tgz
-            "
+            sudo docker save ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest | ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_RISK_IP }} "sudo ctr --namespace=moby images import -"
+            
+            ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_RISK_IP }} "sudo ctr --namespace=moby containers create --net-host docker.io/${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest risk-service && sudo ctr --namespace=moby tasks start -d risk-service"
 
-            # === AUTOMATIZACIÓN MICROSERVICIO 2: NOTIFICATION SERVICE ===
+            # === MICROSERVICIO 2: NOTIFICATION SERVICE (Piping directo a Containerd) ===
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
-            sudo docker save -o ~/notify.tar ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
             
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/docker-static.tgz ec2-user@${{ env.INTERNAL_NOTIFY_IP }}:/tmp/
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/notify.tar ec2-user@${{ env.INTERNAL_NOTIFY_IP }}:/tmp/
+            ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_NOTIFY_IP }} "sudo ctr --namespace=moby tasks kill notify-service || true; sudo ctr --namespace=moby containers rm notify-service || true"
             
-            ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_NOTIFY_IP }} "
-              if ! command -v docker &> /dev/null; then
-                tar -xzf /tmp/docker-static.tgz -C /tmp/
-                sudo cp /tmp/docker/* /usr/bin/
-                sudo mkdir -p /etc/docker
-                echo '{\"iptables\": false}' | sudo tee /etc/docker/daemon.json
-                sudo dockerd > /dev/null 2>&1 &
-                sleep 5
-              fi
-              sudo docker stop notify-service || true
-              sudo docker rm notify-service || true
-              sudo docker load -i /tmp/notify.tar
-              sudo docker run -d --net=host --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
-              rm -f /tmp/notify.tar /tmp/docker-static.tgz
-            "
+            sudo docker save ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest | ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_NOTIFY_IP }} "sudo ctr --namespace=moby images import -"
+            
+            ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_NOTIFY_IP }} "sudo ctr --namespace=moby containers create --net-host docker.io/${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest notify-service && sudo ctr --namespace=moby tasks start -d notify-service"
 
-            # === AUTOMATIZACIÓN MICROSERVICIO 3: TRACKING SERVICE ===
+            # === MICROSERVICIO 3: TRACKING SERVICE (Piping directo a Containerd) ===
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
-            sudo docker save -o ~/tracking.tar ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
             
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/docker-static.tgz ec2-user@${{ env.INTERNAL_TRACKING_IP }}:/tmp/
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/tracking.tar ec2-user@${{ env.INTERNAL_TRACKING_IP }}:/tmp/
+            ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_TRACKING_IP }} "sudo ctr --namespace=moby tasks kill tracking-service || true; sudo ctr --namespace=moby containers rm tracking-service || true"
             
-            ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_TRACKING_IP }} "
-              if ! command -v docker &> /dev/null; then
-                tar -xzf /tmp/docker-static.tgz -C /tmp/
-                sudo cp /tmp/docker/* /usr/bin/
-                sudo mkdir -p /etc/docker
-                echo '{\"iptables\": false}' | sudo tee /etc/docker/daemon.json
-                sudo dockerd > /dev/null 2>&1 &
-                sleep 5
-              fi
-              sudo docker stop tracking-service || true
-              sudo docker rm tracking-service || true
-              sudo docker load -i /tmp/tracking.tar
-              sudo docker run -d --net=host --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
-              rm -f /tmp/tracking.tar /tmp/docker-static.tgz
-            "
+            sudo docker save ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest | ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_TRACKING_IP }} "sudo ctr --namespace=moby images import -"
+            
+            ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_TRACKING_IP }} "sudo ctr --namespace=moby containers create --net-host docker.io/${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest tracking-service && sudo ctr --namespace=moby tasks start -d tracking-service"
 
-            # Limpieza perimetral final en el Bastion Host
+            # Limpieza de seguridad en el Bastion Host
             rm -f ~/labsuser.pem
-            rm -f ~/*.tar
+            sudo docker image prune -f
 
   deploy-prod:
     name: 'Desplegar en Entorno PROD (Auto Scaling Group)'
