@@ -106,73 +106,50 @@ jobs:
               sudo usermod -aG docker ubuntu
             fi
 
-            # 3. Descargar binario estático de Docker para las EC2 privadas (Instalación Offline)
-            if [ ! -f ~/docker-static.tgz ]; then
-              curl -L https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o ~/docker-static.tgz
-            fi
-
             # === AUTOMATIZACIÓN MICROSERVICIO 1: RISK SERVICE ===
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
             sudo docker save -o ~/risk.tar ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
             
-            # Transferir instalador offline e imagen por la red interna
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/docker-static.tgz ec2-user@${{ env.INTERNAL_RISK_IP }}:~/
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/risk.tar ec2-user@${{ env.INTERNAL_RISK_IP }}:~/
+            # Transferir imagen por la red interna a /tmp/ de la EC2 privada
+            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/risk.tar ec2-user@${{ env.INTERNAL_RISK_IP }}/tmp/
             
             ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_RISK_IP }} "
-              if ! command -v docker &> /dev/null; then
-                tar -xzf ~/docker-static.tgz
-                sudo cp docker/* /usr/bin/
-                sudo dockerd &
-                sleep 4
-              fi
-              sudo docker stop risk-service || true
-              sudo docker rm risk-service || true
-              sudo docker load -i ~/risk.tar
-              sudo docker run -d -p 8000:8000 --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
-              rm -f ~/risk.tar ~/docker-static.tgz
+              sudo ctr --namespace=moby tasks kill risk-service || true
+              sudo ctr --namespace=moby containers rm risk-service || true
+              sudo ctr --namespace=moby images import /tmp/risk.tar
+              sudo ctr --namespace=moby containers create --net-host docker.io/${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest risk-service
+              sudo ctr --namespace=moby tasks start -d risk-service
+              rm -f /tmp/risk.tar
             "
 
             # === AUTOMATIZACIÓN MICROSERVICIO 2: NOTIFICATION SERVICE ===
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
             sudo docker save -o ~/notify.tar ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
             
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/docker-static.tgz ec2-user@${{ env.INTERNAL_NOTIFY_IP }}:~/
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/notify.tar ec2-user@${{ env.INTERNAL_NOTIFY_IP }}:~/
+            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/notify.tar ec2-user@${{ env.INTERNAL_NOTIFY_IP }}/tmp/
             
             ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_NOTIFY_IP }} "
-              if ! command -v docker &> /dev/null; then
-                tar -xzf ~/docker-static.tgz
-                sudo cp docker/* /usr/bin/
-                sudo dockerd &
-                sleep 4
-              fi
-              sudo docker stop notify-service || true
-              sudo docker rm notify-service || true
-              sudo docker load -i ~/notify.tar
-              sudo docker run -d -p 8000:8000 --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
-              rm -f ~/notify.tar ~/docker-static.tgz
+              sudo ctr --namespace=moby tasks kill notify-service || true
+              sudo ctr --namespace=moby containers rm notify-service || true
+              sudo ctr --namespace=moby images import /tmp/notify.tar
+              sudo ctr --namespace=moby containers create --net-host docker.io/${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest notify-service
+              sudo ctr --namespace=moby tasks start -d notify-service
+              rm -f /tmp/notify.tar
             "
 
             # === AUTOMATIZACIÓN MICROSERVICIO 3: TRACKING SERVICE ===
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
             sudo docker save -o ~/tracking.tar ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
             
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/docker-static.tgz ec2-user@${{ env.INTERNAL_TRACKING_IP }}:~/
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/tracking.tar ec2-user@${{ env.INTERNAL_TRACKING_IP }}:~/
+            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/tracking.tar ec2-user@${{ env.INTERNAL_TRACKING_IP }}/tmp/
             
             ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_TRACKING_IP }} "
-              if ! command -v docker &> /dev/null; then
-                tar -xzf ~/docker-static.tgz
-                sudo cp docker/* /usr/bin/
-                sudo dockerd &
-                sleep 4
-              fi
-              sudo docker stop tracking-service || true
-              sudo docker rm tracking-service || true
-              sudo docker load -i ~/tracking.tar
-              sudo docker run -d -p 8000:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
-              rm -f ~/tracking.tar ~/docker-static.tgz
+              sudo ctr --namespace=moby tasks kill tracking-service || true
+              sudo ctr --namespace=moby containers rm tracking-service || true
+              sudo ctr --namespace=moby images import /tmp/tracking.tar
+              sudo ctr --namespace=moby containers create --net-host docker.io/${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest tracking-service
+              sudo ctr --namespace=moby tasks start -d tracking-service
+              rm -f /tmp/tracking.tar
             "
 
             # Limpieza total de archivos temporales en la Home del Bastion
