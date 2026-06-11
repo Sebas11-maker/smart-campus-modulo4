@@ -3,7 +3,7 @@ name: 'CI-CD Multi-Account Microservices Unified'
 on:
   push:
     branches:
-      - qa # Centralizado en qa para construir y solucionar errores de ambos entornos de golpe
+      - qa 
 
 jobs:
   build-and-test:
@@ -95,20 +95,38 @@ jobs:
           username: ubuntu 
           key: ${{ secrets.AWS_LLAVE_QA }}
           script: |
-            sudo rm -f /tmp/labsuser.pem
+            # Inyectamos la llave en el Bastion de forma limpia y segura
             echo "${{ secrets.AWS_LLAVE_QA }}" > /tmp/labsuser.pem
             chmod 400 /tmp/labsuser.pem
             
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_RISK_IP }} "sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest && sudo docker stop risk-service || true && sudo docker rm risk-service || true && sudo docker run -d -p 8000:8000 --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest"
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_NOTIFY_IP }} "sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest && sudo docker stop notify-service || true && sudo docker rm notify-service || true && sudo docker run -d -p 8000:8000 --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest"
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_TRACKING_IP }} "sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest && sudo docker stop tracking-service || true && sudo docker rm tracking-service || true && sudo docker run -d -p 8000:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest"
+            # 1. Actualizar Risk Service (Frenar, limpiar y encender con la imagen fresca)
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_RISK_IP }} "
+              sudo docker stop risk-service || true && 
+              sudo docker rm risk-service || true && 
+              sudo docker run -d -p 8000:8000 --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
+            "
+
+            # 2. Actualizar Notification Service
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_NOTIFY_IP }} "
+              sudo docker stop notify-service || true && 
+              sudo docker rm notify-service || true && 
+              sudo docker run -d -p 8000:8000 --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
+            "
+
+            # 3. Actualizar Tracking Service
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_TRACKING_IP }} "
+              sudo docker stop tracking-service || true && 
+              sudo docker rm tracking-service || true && 
+              sudo docker run -d -p 8000:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
+            "
             
-            sudo rm -f /tmp/labsuser.pem
+            # Limpieza perimetral de credenciales en el Bastion
+            rm -f /tmp/labsuser.pem
 
   deploy-prod:
     name: 'Desplegar en Entorno PROD (Auto Scaling Group)'
     needs: docker-push
-    runs-on: ubuntu-latest # Se quita la condicional de rama para que corra SIEMPRE desde la rama QA
+    runs-on: ubuntu-latest
     steps:
       - name: Configurar Credenciales AWS - CUENTA PRODUCCIÓN
         uses: aws-actions/configure-aws-credentials@v2
@@ -120,7 +138,6 @@ jobs:
 
       - name: Forzar Actualización de Instancias Productivas (Instance Refresh)
         run: |
-          # Capturamos dinámicamente el ASG usando el prefijo de la plantilla definido en el main.tf productivo
           ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?contains(AutoScalingGroupName, 'asg_produccion')].AutoScalingGroupName" --output text)
           
           if [ ! -z "$ASG_NAME" ] && [ "$ASG_NAME" != "None" ]; then
