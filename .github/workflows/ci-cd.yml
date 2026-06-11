@@ -3,7 +3,7 @@ name: 'CI-CD Multi-Account Microservices Unified'
 on:
   push:
     branches:
-      - qa 
+      - qa # Centralizado en la rama qa para construir y solucionar errores de ambos entornos de golpe
 
 jobs:
   build-and-test:
@@ -95,33 +95,34 @@ jobs:
           username: ubuntu 
           key: ${{ secrets.AWS_LLAVE_QA }}
           script: |
-            # Inyectamos la llave en el Bastion de forma limpia y segura
+            # Creamos el archivo de llave de forma segura dentro del Bastion
+            sudo rm -f /tmp/labsuser.pem
             echo "${{ secrets.AWS_LLAVE_QA }}" > /tmp/labsuser.pem
             chmod 400 /tmp/labsuser.pem
             
-            # 1. Actualizar Risk Service (Frenar, limpiar y encender con la imagen fresca)
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_RISK_IP }} "
-              sudo docker stop risk-service || true && 
-              sudo docker rm risk-service || true && 
+            # 1. Despliegue del Servicio de Riesgo Académico (Security)
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_RISK_IP }} << 'EOF'
+              sudo docker stop risk-service || true
+              sudo docker rm risk-service || true
               sudo docker run -d -p 8000:8000 --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
-            "
+            EOF
 
-            # 2. Actualizar Notification Service
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_NOTIFY_IP }} "
-              sudo docker stop notify-service || true && 
-              sudo docker rm notify-service || true && 
+            # 2. Despliegue del Servicio de Notificaciones
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_NOTIFY_IP }} << 'EOF'
+              sudo docker stop notify-service || true
+              sudo docker rm notify-service || true
               sudo docker run -d -p 8000:8000 --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
-            "
+            EOF
 
-            # 3. Actualizar Tracking Service
-            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_TRACKING_IP }} "
-              sudo docker stop tracking-service || true && 
-              sudo docker rm tracking-service || true && 
+            # 3. Despliegue del Servicio de Rastreo de Activos (Tracking)
+            ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@${{ env.INTERNAL_TRACKING_IP }} << 'EOF'
+              sudo docker stop tracking-service || true
+              sudo docker rm tracking-service || true
               sudo docker run -d -p 8000:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
-            "
+            EOF
             
-            # Limpieza perimetral de credenciales en el Bastion
-            rm -f /tmp/labsuser.pem
+            # Limpieza total de llaves temporales dentro del Bastion
+            sudo rm -f /tmp/labsuser.pem
 
   deploy-prod:
     name: 'Desplegar en Entorno PROD (Auto Scaling Group)'
