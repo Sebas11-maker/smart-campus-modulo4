@@ -1,209 +1,142 @@
-name: 'CI-CD Multi-Account Microservices Unified'
+name: CI-CD Smart Campus M4
 
 on:
   push:
     branches:
-      - qa # Centralizado en la rama qa para construir y solucionar todo de golpe
+      - main
+  pull_request:
 
 jobs:
   build-and-test:
-    name: 'Pruebas y Compilación (Nx)'
+    name: 'Pruebas y Compilación (Nx + Pytest)'
     runs-on: ubuntu-latest
+
     steps:
-      - name: Copiar Código
+      - name: Checkout código
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0 
+          fetch-depth: 0
 
-      - name: Configurar Node
+      - name: Configurar Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 18
-          cache: 'npm'
 
-      - name: Instalar Dependencias
+      - name: Instalar dependencias Node
         run: npm ci
 
-      - name: Ejecutar Pruebas y Compilación (Nx Workspaces)
-        run: |
-          npx nx run-many --target=test --all || echo "Advertencia: Pruebas completadas con observaciones."
-          npx nx run-many --target=build --all --configuration=production
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-  docker-push:
-    name: 'Empaquetar y Publicar en DockerHub (QA y PROD)'
-    needs: build-and-test
+      - name: Instalar dependencias Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi uvicorn pytest httpx pydantic
+
+      - name: Ejecutar pruebas unitarias
+        run: |
+          pytest academic-risk-service/test_main.py
+          pytest notification-service/test_main.py
+          pytest tracking-service/test_main.py
+
+      - name: Build Nx (monorepo)
+        run: npx nx run-many --target=build --all || true
+
+
+  docker-build-push:
+    name: 'Build & Push Docker Images'
     runs-on: ubuntu-latest
+    needs: build-and-test
+
     steps:
-      - name: Copiar Código
+      - name: Checkout código
         uses: actions/checkout@v3
 
-      - name: Autenticar en DockerHub
-        uses: docker/login-action@v2
+      - name: Login DockerHub
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Construir y Subir Imágenes Duales (Los 3 Microservicios)
-        run: |
-          echo "===> Empaquetando ACADEMIC-RISK-SERVICE <==="
-          docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest .
-          docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod-latest .
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod-latest
+      # ---------------- TRACKING ----------------
+      - name: Build Tracking QA
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa ./tracking-service
 
-          echo "===> Empaquetando NOTIFICATION-SERVICE <==="
-          docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest .
-          docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod-latest .
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod-latest
+      - name: Push Tracking QA
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
 
-          echo "===> Empaquetando TRACKING-SERVICE <==="
-          docker build -f tracking-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest .
-          docker build -f tracking-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod-latest .
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod-latest
+      - name: Build Tracking PROD
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod ./tracking-service
+
+      - name: Push Tracking PROD
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod
+
+      # ---------------- RISK ----------------
+      - name: Build Risk QA
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa ./academic-risk-service
+
+      - name: Push Risk QA
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
+
+      - name: Build Risk PROD
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod ./academic-risk-service
+
+      - name: Push Risk PROD
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod
+
+      # ---------------- NOTIFICATION ----------------
+      - name: Build Notification QA
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa ./notification-service
+
+      - name: Push Notification QA
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
+
+      - name: Build Notification PROD
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod ./notification-service
+
+      - name: Push Notification PROD
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod
+
 
   deploy-qa:
-    name: 'Desplegar en Entorno QA (Aislado por SSH Interno)'
-    needs: docker-push
+    name: 'Deploy QA (EC2)'
     runs-on: ubuntu-latest
+    needs: docker-build-push
+
     steps:
-      - name: Configurar Credenciales AWS - CUENTA QA
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Deploy en QA por SSH (Bastion)
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_QA }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_QA }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN_QA }}
-          aws-region: us-east-1
-
-      - name: Obtener IPs Dinámicas desde Terraform Outputs
-        run: |
-          BASTION_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Bastion-Host-UCE-M4-qa" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PublicIpAddress" --output text)
-          RISK_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Academic-Risk-Service-QA-M4" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
-          NOTIFY_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Notification-Service-QA-M4" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
-          TRACKING_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Tracking-Service-QA-M4" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
-          
-          echo "BASTION_HOST_IP=$BASTION_IP" >> $GITHUB_ENV
-          echo "INTERNAL_RISK_IP=$RISK_IP" >> $GITHUB_ENV
-          echo "INTERNAL_NOTIFY_IP=$NOTIFY_IP" >> $GITHUB_ENV
-          echo "INTERNAL_TRACKING_IP=$TRACKING_IP" >> $GITHUB_ENV
-
-      - name: Ejecutar Despliegue Automatizado Docker Air-Gapped a través de Bastion
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ env.BASTION_HOST_IP }}
-          username: ubuntu 
-          key: ${{ secrets.AWS_LLAVE_QA }}
+          host: ${{ secrets.QA_BASTION_IP }}
+          username: ec2-user
+          key: ${{ secrets.AWS_SSH_KEY }}
           script: |
-            # 1. Preparar llave en la home del Bastion (~/) con permisos seguros
-            rm -f ~/labsuser.pem
-            echo "${{ secrets.AWS_LLAVE_QA }}" > ~/labsuser.pem
-            chmod 400 ~/labsuser.pem
-            
-            # 2. Asegurar Docker en el Bastion Host
-            if ! command -v docker &> /dev/null; then
-              sudo apt update && sudo apt install -y docker.io
-              sudo usermod -aG docker ubuntu
-            fi
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
 
-            # 3. Descargar binario de Docker para las instancias privadas una sola vez si no existe
-            if [ ! -f ~/docker-static.tgz ]; then
-              curl -L https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o ~/docker-static.tgz
-            fi
+            docker-compose -f /home/ec2-user/docker-compose-qa.yml up -d
 
-            # === MICROSERVICIO 1: RISK SERVICE ===
-            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
-            sudo docker save -o ~/risk.tar ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
-            
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/docker-static.tgz ec2-user@${{ env.INTERNAL_RISK_IP }}:/tmp/
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/risk.tar ec2-user@${{ env.INTERNAL_RISK_IP }}:/tmp/
-            
-            ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_RISK_IP }} "
-              if ! command -v docker &> /dev/null; then
-                tar -xzf /tmp/docker-static.tgz -C /tmp/
-                sudo cp /tmp/docker/* /usr/bin/
-                sudo mkdir -p /etc/docker
-                echo '{\"iptables\": false}' | sudo tee /etc/docker/daemon.json
-                sudo dockerd > /dev/null 2>&1 &
-                sleep 5
-              fi
-              sudo docker stop risk-service || true
-              sudo docker rm risk-service || true
-              sudo docker load -i /tmp/risk.tar
-              sudo docker run -d --net=host --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa-latest
-              rm -f /tmp/risk.tar /tmp/docker-static.tgz
-            "
-
-            # === MICROSERVICIO 2: NOTIFICATION SERVICE ===
-            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
-            sudo docker save -o ~/notify.tar ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
-            
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/docker-static.tgz ec2-user@${{ env.INTERNAL_NOTIFY_IP }}:/tmp/
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/notify.tar ec2-user@${{ env.INTERNAL_NOTIFY_IP }}:/tmp/
-            
-            ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_NOTIFY_IP }} "
-              if ! command -v docker &> /dev/null; then
-                tar -xzf /tmp/docker-static.tgz -C /tmp/
-                sudo cp /tmp/docker/* /usr/bin/
-                sudo mkdir -p /etc/docker
-                echo '{\"iptables\": false}' | sudo tee /etc/docker/daemon.json
-                sudo dockerd > /dev/null 2>&1 &
-                sleep 5
-              fi
-              sudo docker stop notify-service || true
-              sudo docker rm notify-service || true
-              sudo docker load -i /tmp/notify.tar
-              sudo docker run -d --net=host --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa-latest
-              rm -f /tmp/notify.tar /tmp/docker-static.tgz
-            "
-
-            # === MICROSERVICIO 3: TRACKING SERVICE ===
-            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
-            sudo docker save -o ~/tracking.tar ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
-            
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/docker-static.tgz ec2-user@${{ env.INTERNAL_TRACKING_IP }}:/tmp/
-            scp -i ~/labsuser.pem -o StrictHostKeyChecking=no ~/tracking.tar ec2-user@${{ env.INTERNAL_TRACKING_IP }}:/tmp/
-            
-            ssh -i ~/labsuser.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_TRACKING_IP }} "
-              if ! command -v docker &> /dev/null; then
-                tar -xzf /tmp/docker-static.tgz -C /tmp/
-                sudo cp /tmp/docker/* /usr/bin/
-                sudo mkdir -p /etc/docker
-                echo '{\"iptables\": false}' | sudo tee /etc/docker/daemon.json
-                sudo dockerd > /dev/null 2>&1 &
-                sleep 5
-              fi
-              sudo docker stop tracking-service || true
-              sudo docker rm tracking-service || true
-              sudo docker load -i /tmp/tracking.tar
-              sudo docker run -d --net=host --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa-latest
-              rm -f /tmp/tracking.tar /tmp/docker-static.tgz
-            "
-
-            # Limpieza total en el Bastion
-            rm -f ~/labsuser.pem
-            rm -f ~/*.tar
 
   deploy-prod:
-    name: 'Desplegar en Entorno PROD (Auto Scaling Group)'
-    needs: docker-push
+    name: 'Deploy PRODUCCIÓN (ASG / EC2)'
     runs-on: ubuntu-latest
-    steps:
-      - name: Configurar Credenciales AWS - CUENTA PRODUCCIÓN
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN_PROD }}
-          aws-region: us-east-1
+    needs: docker-build-push
 
-      - name: Forzar Actualización de Instancias Productivas (Instance Refresh)
-        run: |
-          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?contains(AutoScalingGroupName, 'asg_produccion')].AutoScalingGroupName" --output text)
-          
-          if [ ! -z "$ASG_NAME" ] && [ "$ASG_NAME" != "None" ]; then
-            echo "===> ¡ASG Productivo Detectado de forma anticipada!: $ASG_NAME <==="
-            aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME" || echo 'Aviso: El ASG ya se está actualizando. Continuando...'
-          else
-            echo "Aviso: Si es la primera vez que corre Terraform, el ASG se creará en paralelo. Ignorando temporalmente para evitar bloqueos."
-          fi
+    steps:
+      - name: Deploy en PROD por SSH (Bastion)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_BASTION_IP }}
+          username: ec2-user
+          key: ${{ secrets.AWS_SSH_KEY }}
+          script: |
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod
+
+            docker service update --force tracking-service || true
+            docker service update --force academic-risk-service || true
+            docker service update --force notification-service || true
