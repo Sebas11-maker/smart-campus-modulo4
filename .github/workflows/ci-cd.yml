@@ -59,23 +59,23 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Construir y Subir Imágenes Duales (Los 3 Microservicios)
+      - name: Construir y Subir Imágenes Duales (Contexto en Raíz del Mono Repo)
         run: |
           echo "===> PROCESANDO TRACKING-SERVICE <==="
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa ./tracking-service
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod ./tracking-service
+          docker build -f tracking-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa .
+          docker build -f tracking-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod .
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod
           
           echo "===> PROCESANDO ACADEMIC-RISK-SERVICE <==="
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa ./academic-risk-service
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod ./academic-risk-service
+          docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa .
+          docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod .
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod
           
           echo "===> PROCESANDO NOTIFICATION-SERVICE <==="
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa ./notification-service
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod ./notification-service
+          docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa .
+          docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod .
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod
 
