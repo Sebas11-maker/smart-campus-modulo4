@@ -2,9 +2,10 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
 
+ENV = os.getenv("ENV", "development")
+root = "/notifications" if ENV == "production" else ""
 
-app = FastAPI(title="Servicio de Notificaciones UCE")
-
+app = FastAPI(title="Servicio de Notificaciones UCE", root_path="/notifications") # Reemplazar por /notifications si usan ese prefijo
 
 class RequestNotificacion(BaseModel):
     estudiante_id: int

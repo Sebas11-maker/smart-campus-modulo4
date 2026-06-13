@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
-app = FastAPI(title="Servicio de Riesgo Académico UCE")
+ENV = os.getenv("ENV", "development")
+root = "/risk" if ENV == "production" else ""
 
+app = FastAPI(title="Servicio de Riesgo Académico UCE", root_path="/risk")
 @app.get("/", response_class=HTMLResponse)
 async def frontend_risk():
     return """
