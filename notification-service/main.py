@@ -1,11 +1,17 @@
+import os
 from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
 
+ENV = os.getenv("ENV", "development")
+root = "/notifications" if ENV == "production" else ""
 
-app = FastAPI(title="Servicio de Notificaciones UCE")
-
-
+app = FastAPI(
+        title="Servicio de Notificaciones UCE",
+        root_path=root,
+        docs_url="/docs",
+        openapi_url="/openapi.json"
+    )
 class RequestNotificacion(BaseModel):
     estudiante_id: int
     mensaje: str

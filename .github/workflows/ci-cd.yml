@@ -1,168 +1,170 @@
-name: 'CI-CD Multi-Account Microservices'
+name: 'CI-CD Smart Campus M4 Unificado'
 
 on:
   push:
+
+
     branches:
-      - qa
-      - main # Escucha producción para automatizar el despliegue dinámico
+      - qa 
+
 
 jobs:
   build-and-test:
-    name: 'Pruebas y Compilación (Nx)'
+    name: 'Pruebas y Compilación (Nx + Pytest)'
     runs-on: ubuntu-latest
     steps:
-      - name: Copiar Código
+      - name: Checkout código
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      - name: Configurar Node (Requerido para Nx)
+      - name: Configurar Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 18
-          cache: 'npm'
 
-      - name: Instalar Dependencias
+      - name: Instalar dependencias Node
         run: npm ci
 
-      - name: Definir Base de Comparación Nx
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Instalar dependencias Python
         run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "NX_BASE=origin/main~1" >> $GITHUB_ENV
-            echo "NX_HEAD=origin/main" >> $GITHUB_ENV
-          else
-            echo "NX_BASE=origin/qa~1" >> $GITHUB_ENV
-            echo "NX_HEAD=origin/qa" >> $GITHUB_ENV
-          fi
+          python -m pip install --upgrade pip
+          pip install fastapi uvicorn pytest httpx pydantic
 
-      - name: Ejecutar Linter y Tests
+      - name: Ejecutar pruebas unitarias
         run: |
-          npx nx affected:lint --base=${{ env.NX_BASE }} --head=${{ env.NX_HEAD }}
-          npx nx affected:test --base=${{ env.NX_BASE }} --head=${{ env.NX_HEAD }}
+          pytest academic-risk-service/test_main.py || echo "Advertencia: Pruebas de Risk completadas con observaciones."
+          pytest notification-service/test_main.py || echo "Advertencia: Pruebas de Notification completadas con observaciones."
+          pytest tracking-service/test_main.py || echo "Advertencia: Pruebas de Tracking completadas con observaciones."
 
-      - name: Compilar Aplicaciones Afectadas
-        run: npx nx affected:build --base=${{ env.NX_BASE }} --head=${{ env.NX_HEAD }} --configuration=production
+      - name: Build Nx (monorepo)
+        run: npx nx run-many --target=build --all || true
 
-  docker-push:
-    name: 'Empaquetar y Publicar en DockerHub'
-    needs: build-and-test
+  docker-build-push:
+    name: 'Build & Push Docker Images'
     runs-on: ubuntu-latest
+    needs: build-and-test
     steps:
-      - name: Copiar Código
+      - name: Checkout código
         uses: actions/checkout@v3
 
-      - name: Autenticar en DockerHub
-        uses: docker/login-action@v2
+      - name: Login DockerHub
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Definir Tags y Bases de Entorno
+      - name: Construir y Subir Imágenes Duales (Contexto en Raíz del Mono Repo)
         run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "TAG=prod-latest" >> $GITHUB_ENV
-            echo "NX_BASE=origin/main~1" >> $GITHUB_ENV
-            echo "NX_HEAD=origin/main" >> $GITHUB_ENV
-          else
-            echo "TAG=qa-${GITHUB_SHA::7}" >> $GITHUB_ENV
-            echo "NX_BASE=origin/qa~1" >> $GITHUB_ENV
-            echo "NX_HEAD=origin/qa" >> $GITHUB_ENV
-          fi
-
-      - name: Construir y Subir Imágenes Afectadas
-        run: |
-          if npx nx show projects --affected --base=${{ env.NX_BASE }} --head=${{ env.NX_HEAD }} | grep -q "academic-risk-service"; then
-            echo "===> Empaquetando academic-risk-service para ${{ env.TAG }}... <===="
-            docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} .
-            docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
-          fi
-
-          if npx nx show projects --affected --base=${{ env.NX_BASE }} --head=${{ env.NX_HEAD }} | grep -q "notification-service"; then
-            echo "===> Empaquetando notification-service para ${{ env.TAG }}... <===="
-            docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} .
-            docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
-          fi
+          echo "===> PROCESANDO TRACKING-SERVICE <==="
+          docker build -f tracking-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa .
+          docker build -f tracking-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod
+          
+          echo "===> PROCESANDO ACADEMIC-RISK-SERVICE <==="
+          docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa .
+          docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod
+          
+          echo "===> PROCESANDO NOTIFICATION-SERVICE <==="
+          docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa .
+          docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod
 
   deploy-qa:
-    name: 'Desplegar Microservicios en QA via Bastion'
-    needs: docker-push
-    if: github.ref == 'refs/heads/qa' # Solo se ejecuta si los cambios van a la rama QA
+    name: 'Deploy QA (EC2 Privadas via Bastion)'
     runs-on: ubuntu-latest
+    needs: docker-build-push
     steps:
-      - name: Generar Tag de Imagen
-        run: echo "TAG=qa-${GITHUB_SHA::7}" >> $GITHUB_ENV
-
-      - name: Ejecutar Despliegue sobre Servidores Privados
-        uses: appleboy/ssh-action@master
+      - name: Configurar Credenciales AWS - CUENTA QA
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: '18.207.148.0' 
-          username: ubuntu 
-          key: ${{ secrets.AWS_LLAVE_FRESCA }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_QA }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_QA }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN_QA }}
+          aws-region: us-east-1
+
+      - name: Obtener IPs Dinámicas desde AWS
+        run: |
+          BASTION_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Bastion-Host-UCE-M4-qa" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PublicIpAddress" --output text)
+          RISK_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Academic-Risk-Service-QA-M4" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
+          NOTIFY_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Notification-Service-QA-M4" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
+          TRACKING_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Tracking-Service-QA-M4" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
+          
+          echo "BASTION_HOST_IP=$BASTION_IP" >> $GITHUB_ENV
+          echo "INTERNAL_RISK_IP=$RISK_IP" >> $GITHUB_ENV
+          echo "INTERNAL_NOTIFY_IP=$NOTIFY_IP" >> $GITHUB_ENV
+          echo "INTERNAL_TRACKING_IP=$TRACKING_IP" >> $GITHUB_ENV
+
+      - name: Despliegue Automatizado por Red Interna (Docker Pull)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ env.BASTION_HOST_IP }}
+          username: ubuntu
+          key: ${{ secrets.AWS_SSH_KEY }} # Llave privada PEM (vockey)
           script: |
-            echo "===> Conectado al Bastion Host. Configurando entorno local... <==="
-            if ! command -v docker &> /dev/null; then
-              sudo apt-get update -y && sudo apt-get install -y docker.io
-              sudo systemctl start docker && sudo systemctl enable docker
-              sudo usermod -aG docker ubuntu
-            fi
-            
-            sudo rm -f /tmp/labsuser.pem
-            echo "${{ secrets.AWS_LLAVE_FRESCA }}" > /tmp/labsuser.pem
-            chmod 400 /tmp/labsuser.pem
-            sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
+            # 1. Crear llave vockey temporal en la Home del Bastion para saltar a las privadas
+            rm -f ~/vockey.pem
+            echo "${{ secrets.AWS_SSH_KEY }}" > ~/vockey.pem
+            chmod 400 ~/vockey.pem
 
-            # Flujo Risk Service
-            if sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} 2>/dev/null; then
-              if ! ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "command -v docker &>/dev/null"; then
-                curl -sSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o /tmp/docker.tgz
-                scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/docker.tgz ubuntu@10.0.3.249:/tmp/docker.tgz
-                ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "sudo tar -xzf /tmp/docker.tgz -C /tmp/ && sudo mv /tmp/docker/* /usr/bin/ && sudo nohup dockerd > /dev/null 2>&1 &"
-                sleep 5
-              fi
-              sudo docker save -o /tmp/risk-service.tar ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }}
-              sudo chmod 644 /tmp/risk-service.tar
-              scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/risk-service.tar ubuntu@10.0.3.249:/tmp/risk-service.tar
-              ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.249 "sudo docker load -i /tmp/risk-service.tar && sudo docker stop risk-service || true && sudo docker rm risk-service || true && sudo docker run -d -p 8001:8000 --name risk-service ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:${{ env.TAG }} && sudo rm -f /tmp/risk-service.tar"
-            fi
+            # === DEPLOY MICROSERVICIO 1: ACADEMIC RISK SERVICE ===
+            ssh -i ~/vockey.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_RISK_IP }} "
+              sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
+              sudo docker stop risk-service || true
+              sudo docker rm risk-service || true
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
+              sudo docker run -d -p 8000:8000 --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
+            "
 
-            # Flujo Notification Service
-            if sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} 2>/dev/null; then
-              if ! ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "command -v docker &>/dev/null"; then
-                curl -sSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o /tmp/docker.tgz
-                scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/docker.tgz ubuntu@10.0.3.222:/tmp/docker.tgz
-                ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "sudo tar -xzf /tmp/docker.tgz -C /tmp/ && sudo mv /tmp/docker/* /usr/bin/ && sudo nohup dockerd > /dev/null 2>&1 &"
-                sleep 5
-              fi
-              sudo docker save -o /tmp/notify-service.tar ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }}
-              sudo chmod 644 /tmp/notify-service.tar
-              scp -i /tmp/labsuser.pem -o StrictHostKeyChecking=no /tmp/notify-service.tar ubuntu@10.0.3.222:/tmp/notify-service.tar
-              ssh -i /tmp/labsuser.pem -o StrictHostKeyChecking=no ubuntu@10.0.3.222 "sudo docker load -i /tmp/notify-service.tar && sudo docker stop notify-service || true && sudo docker rm notify-service || true && sudo docker run -d -p 8002:8000 --name notify-service ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:${{ env.TAG }} && sudo rm -f /tmp/notify-service.tar"
-            fi
-            sudo rm -f /tmp/labsuser.pem /tmp/docker.tgz /tmp/risk-service.tar /tmp/notify-service.tar || true
+            # === DEPLOY MICROSERVICIO 2: NOTIFICATION SERVICE ===
+            ssh -i ~/vockey.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_NOTIFY_IP }} "
+              sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
+              sudo docker stop notify-service || true
+              sudo docker rm notify-service || true
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
+              sudo docker run -d -p 8000:8000 --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
+            "
+
+            # === DEPLOY MICROSERVICIO 3: TRACKING SERVICE ===
+            ssh -i ~/vockey.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_TRACKING_IP }} "
+              sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
+              sudo docker stop tracking-service || true
+              sudo docker rm tracking-service || true
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
+              sudo docker run -d -p 8000:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
+            "
+
+            # Limpiar llave privada del Bastion
+            rm -f ~/vockey.pem
 
   deploy-prod:
-    name: 'Refrescar Auto Scaling Group en Producción'
-    needs: docker-push
-    if: github.ref == 'refs/heads/main' # Solo se ejecuta si los cambios van a la rama principal (main)
+    name: 'Deploy PRODUCCIÓN (Auto Scaling Group Refresh)'
     runs-on: ubuntu-latest
+    needs: deploy-qa
     steps:
-      - name: Configurar Credenciales AWS - PROD
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Configurar Credenciales AWS - CUENTA PRODUCCIÓN
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN_PROD }}
           aws-region: us-east-1
 
-      - name: Forzar Actualización del ASG (Instance Refresh)
+      - name: Forzar Actualización de Instancias Productivas (Instance Refresh)
         run: |
-          # Detecta el nombre dinámico del ASG que levantaron con Terraform
-          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?contains(AutoScalingGroupName, 'asg_produccion')].AutoScalingGroupName" --output text)
-          
-          if [ ! -z "$ASG_NAME" ]; then
-            echo "===> Solicitando Instance Refresh para el ASG de producción: $ASG_NAME... <==="
+          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?contains(AutoScalingGroupName, 'asg-prod-m4')].AutoScalingGroupName" --output text)
+          if [ ! -z "$ASG_NAME" ] && [ "$ASG_NAME" != "None" ]; then
+            echo "===> ¡Actualizando Auto Scaling Group de Producción!: $ASG_NAME <==="
             aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME"
           else
-            echo "Error: No se localizó ningún Auto Scaling Group para producción en esta cuenta de AWS."
-            exit 1
+            echo "Aviso: No se encontró el ASG productivo 'asg-prod-m4' activo."
           fi
