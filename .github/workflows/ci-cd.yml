@@ -2,11 +2,11 @@ name: 'CI-CD Smart Campus M4 Unificado'
 
 on:
   push:
+
+
     branches:
-      - qa # Se dispara automáticamente al hacer push o merge en la rama qa
-  pull_request:
-    branches:
-      - qa
+      - qa 
+
 
 jobs:
   build-and-test:
