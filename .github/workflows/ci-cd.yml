@@ -221,3 +221,36 @@ jobs:
           else
             echo "Aviso: No se encontró el ASG productivo 'asg-prod-m4' activo."
           fi
+
+  
+  create-release:
+    name: 'Generar Release Automático'
+    runs-on: ubuntu-latest
+    needs: deploy-prod
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Crear Etiqueta y Nota de Versión
+        id: github_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.${{ github.run_number }}.0
+          name: "Release Smart Campus M4 - Versión v1.${{ github.run_number }}.0"
+          body: |
+            ## 🚀 Novedades de esta Versión (Módulo 4)
+            
+            Automatización de despliegue continuo ejecutada exitosamente por el equipo (Xavier, Sebas, Wilson).
+            
+            ### 🧱 Componentes Actualizados e Integrados:
+            * **Broker de Eventos:** RabbitMQ activo y configurado con control de Poison Pills.
+            * **Capa de Persistencia NoSQL:** MongoDB integrado mediante patrón Adapter para almacenamiento políglota.
+            * **Infraestructura Cloud:** Despliegue en AWS Academy sincronizado vía Terraform.
+            
+            *Commit de origen: ${{ github.sha }}*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
