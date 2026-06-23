@@ -2,13 +2,12 @@ name: 'CI-CD Smart Campus M4 Unificado'
 
 on:
   push:
-
-
     branches:
       - qa 
-
+  workflow_dispatch:
 
 jobs:
+ 
   build-and-test:
     name: 'Pruebas y Compilación (Nx + Pytest)'
     runs-on: ubuntu-latest
@@ -41,10 +40,18 @@ jobs:
           pytest academic-risk-service/test_main.py || echo "Advertencia: Pruebas de Risk completadas con observaciones."
           pytest notification-service/test_main.py || echo "Advertencia: Pruebas de Notification completadas con observaciones."
           pytest tracking-service/test_main.py || echo "Advertencia: Pruebas de Tracking completadas con observaciones."
+          pytest security-gateway-service/test_main.py || echo "Advertencia: Pruebas de Security Gateway completadas con observaciones."
+          pytest chat-service/test_main.py || echo "Advertencia: Pruebas de Chat completadas con observaciones."
+          pytest dashboard-service/test_main.py || echo "Advertencia: Pruebas de Dashboard completadas con observaciones."
+          pytest report-service/test_main.py || echo "Advertencia: Pruebas de Report completadas con observaciones."
+          pytest export-service/test_main.py || echo "Advertencia: Pruebas de Export completadas con observaciones."
+          pytest analytics-service/test_main.py || echo "Advertencia: Pruebas de Analytics completadas con observaciones."
+          pytest audit-service/test_main.py || echo "Advertencia: Pruebas de Audit completadas con observaciones."
 
       - name: Build Nx (monorepo)
         run: npx nx run-many --target=build --all || true
 
+ 
   docker-build-push:
     name: 'Build & Push Docker Images'
     runs-on: ubuntu-latest
@@ -59,28 +66,32 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Construir y Subir Imágenes Duales (Contexto en Raíz del Mono Repo)
+      - name: Construir y Subir Imágenes Duales (Bucle Automatizado Masivo)
         run: |
-          echo "===> PROCESANDO TRACKING-SERVICE <==="
-          docker build -f tracking-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa .
-          docker build -f tracking-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod .
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:prod
+          SERVICES=(
+            "tracking-service" 
+            "notification-service" 
+            "academic-risk-service" 
+            "security-gateway-service" 
+            "chat-service" 
+            "dashboard-service" 
+            "report-service" 
+            "export-service" 
+            "analytics-service" 
+            "audit-service"
+          )
           
-          echo "===> PROCESANDO ACADEMIC-RISK-SERVICE <==="
-          docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa .
-          docker build -f academic-risk-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod .
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:prod
-          
-          echo "===> PROCESANDO NOTIFICATION-SERVICE <==="
-          docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa .
-          docker build -f notification-service/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod .
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:prod
+          for SVC in "${SERVICES[@]}"; do
+            echo "===> PROCESANDO IMAGEN DOCKER DUAL: $SVC <==="
+            docker build -f $SVC/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/$SVC:qa .
+            docker build -f $SVC/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/$SVC:prod .
+            docker push ${{ secrets.DOCKERHUB_USERNAME }}/$SVC:qa
+            docker push ${{ secrets.DOCKERHUB_USERNAME }}/$SVC:prod
+          done
 
+  
   deploy-qa:
-    name: 'Deploy QA (EC2 Privadas via Bastion)'
+    name: 'Deploy QA (EC2 Consolidadas via Bastion)'
     runs-on: ubuntu-latest
     needs: docker-build-push
     steps:
@@ -95,56 +106,85 @@ jobs:
       - name: Obtener IPs Dinámicas desde AWS
         run: |
           BASTION_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Bastion-Host-UCE-M4-qa" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PublicIpAddress" --output text)
-          RISK_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Academic-Risk-Service-QA-M4" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
-          NOTIFY_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Notification-Service-QA-M4" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
-          TRACKING_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Tracking-Service-QA-M4" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
+          NODE1_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=App-Node-1-Communications-QA" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
+          NODE2_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=App-Node-2-Analytics-QA" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
           
           echo "BASTION_HOST_IP=$BASTION_IP" >> $GITHUB_ENV
-          echo "INTERNAL_RISK_IP=$RISK_IP" >> $GITHUB_ENV
-          echo "INTERNAL_NOTIFY_IP=$NOTIFY_IP" >> $GITHUB_ENV
-          echo "INTERNAL_TRACKING_IP=$TRACKING_IP" >> $GITHUB_ENV
+          echo "QA_NODE_1_IP=$NODE1_IP" >> $GITHUB_ENV
+          echo "QA_NODE_2_IP=$NODE2_IP" >> $GITHUB_ENV
 
-      - name: Despliegue Automatizado por Red Interna (Docker Pull)
+      - name: Despliegue Automatizado por Red Interna (Mapeo de Nodos Multi-Contenedor)
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ env.BASTION_HOST_IP }}
           username: ubuntu
-          key: ${{ secrets.AWS_SSH_KEY }} # Llave privada PEM (vockey)
+          key: ${{ secrets.AWS_SSH_KEY }}
           script: |
-            # 1. Crear llave vockey temporal en la Home del Bastion para saltar a las privadas
             rm -f ~/vockey.pem
             echo "${{ secrets.AWS_SSH_KEY }}" > ~/vockey.pem
             chmod 400 ~/vockey.pem
 
-            # === DEPLOY MICROSERVICIO 1: ACADEMIC RISK SERVICE ===
-            ssh -i ~/vockey.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_RISK_IP }} "
+            # =====================================================
+            # DESPLIEGUE EN NODO 1: COMUNICACIONES Y GATEWAY
+            # =====================================================
+            echo "=> Conectando a App-Node-1: ${{ env.QA_NODE_1_IP }}..."
+            ssh -i ~/vockey.pem -o StrictHostKeyChecking=no ec2-user@${{ env.QA_NODE_1_IP }} "
               sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
-              sudo docker stop risk-service || true
-              sudo docker rm risk-service || true
-              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
-              sudo docker run -d -p 8000:8000 --name risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
-            "
+              
+              # Listado de micros asignados al Nodo 1
+              for APP in tracking-service notification-service security-gateway-service chat-service dashboard-service; do
+                sudo docker stop \$APP || true
+                sudo docker rm \$APP || true
+              done
 
-            # === DEPLOY MICROSERVICIO 2: NOTIFICATION SERVICE ===
-            ssh -i ~/vockey.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_NOTIFY_IP }} "
-              sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
-              sudo docker stop notify-service || true
-              sudo docker rm notify-service || true
-              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
-              sudo docker run -d -p 8000:8000 --name notify-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
-            "
-
-            # === DEPLOY MICROSERVICIO 3: TRACKING SERVICE ===
-            ssh -i ~/vockey.pem -o StrictHostKeyChecking=no ec2-user@${{ env.INTERNAL_TRACKING_IP }} "
-              sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
-              sudo docker stop tracking-service || true
-              sudo docker rm tracking-service || true
               sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
               sudo docker run -d -p 8000:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
+
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
+              sudo docker run -d -p 8001:8000 --name notification-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
+
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/security-gateway-service:qa
+              sudo docker run -d -p 8003:8000 --name security-gateway-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/security-gateway-service:qa
+
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/chat-service:qa
+              sudo docker run -d -p 8004:8000 --name chat-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/chat-service:qa
+
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/dashboard-service:qa
+              sudo docker run -d -p 8005:8000 --name dashboard-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/dashboard-service:qa
             "
 
-            # Limpiar llave privada del Bastion
+            # =====================================================
+            # DESPLIEGUE EN NODO 2: ANALÍTICA, REPORTES Y AUDITORÍA
+            # =====================================================
+            echo "=> Conectando a App-Node-2: ${{ env.QA_NODE_2_IP }}..."
+            ssh -i ~/vockey.pem -o StrictHostKeyChecking=no ec2-user@${{ env.QA_NODE_2_IP }} "
+              sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
+              
+              # Listado de micros asignados al Nodo 2
+              for APP in academic-risk-service report-service export-service analytics-service audit-service; do
+                sudo docker stop \$APP || true
+                sudo docker rm \$APP || true
+              done
+
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
+              sudo docker run -d -p 8002:8000 --name academic-risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
+
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/report-service:qa
+              sudo docker run -d -p 8006:8000 --name report-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/report-service:qa
+
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/export-service:qa
+              sudo docker run -d -p 8007:8000 --name export-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/export-service:qa
+
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/analytics-service:qa
+              sudo docker run -d -p 8008:8000 --name analytics-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/analytics-service:qa
+
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/audit-service:qa
+              sudo docker run -d -p 8009:8000 --name audit-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/audit-service:qa
+            "
+
+            # Cierre seguro de la llave PEM en el Bastion
             rm -f ~/vockey.pem
+
 
   deploy-prod:
     name: 'Deploy PRODUCCIÓN (Auto Scaling Group Refresh)'
