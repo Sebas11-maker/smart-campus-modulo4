@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
- 
+  
   build-and-test:
     name: 'Pruebas y Compilación (Nx + Pytest)'
     runs-on: ubuntu-latest
@@ -33,7 +33,7 @@ jobs:
       - name: Instalar dependencias Python
         run: |
           python -m pip install --upgrade pip
-          pip install fastapi uvicorn pytest httpx pydantic
+          pip install fastapi uvicorn pytest httpx pydantic pika pymongo
 
       - name: Ejecutar pruebas unitarias
         run: |
@@ -51,7 +51,7 @@ jobs:
       - name: Build Nx (monorepo)
         run: npx nx run-many --target=build --all || true
 
- 
+  
   docker-build-push:
     name: 'Build & Push Docker Images'
     runs-on: ubuntu-latest
@@ -108,10 +108,12 @@ jobs:
           BASTION_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Bastion-Host-UCE-M4-qa" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PublicIpAddress" --output text)
           NODE1_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=App-Node-1-Communications-QA" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
           NODE2_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=App-Node-2-Analytics-QA" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
+          MONGO_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=MongoDB-Server-QA" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
           
           echo "BASTION_HOST_IP=$BASTION_IP" >> $GITHUB_ENV
           echo "QA_NODE_1_IP=$NODE1_IP" >> $GITHUB_ENV
           echo "QA_NODE_2_IP=$NODE2_IP" >> $GITHUB_ENV
+          echo "QA_MONGO_IP=$MONGO_IP" >> $GITHUB_ENV
 
       - name: Despliegue Automatizado por Red Interna (Mapeo de Nodos Multi-Contenedor)
         uses: appleboy/ssh-action@v1.0.3
@@ -125,13 +127,17 @@ jobs:
             chmod 400 ~/vockey.pem
 
             # =====================================================
-            # DESPLIEGUE EN NODO 1: COMUNICACIONES Y GATEWAY
+            # DESPLIEGUE EN NODO 1: COMUNICACIONES, GATEWAY Y BROKER
             # =====================================================
             echo "=> Conectando a App-Node-1: ${{ env.QA_NODE_1_IP }}..."
             ssh -i ~/vockey.pem -o StrictHostKeyChecking=no ec2-user@${{ env.QA_NODE_1_IP }} "
               sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
               
-              # Listado de micros asignados al Nodo 1
+              # Garantizar la presencia del Broker RabbitMQ en la red interna del Nodo 1
+              sudo docker stop rabbitmq || true && sudo docker rm rabbitmq || true
+              sudo docker run -d -p 5672:5672 -p 15672:15672 --name rabbitmq --restart unless-stopped rabbitmq:3-management-alpine
+              
+              # Limpieza de contenedores anteriores asignados al Nodo 1
               for APP in tracking-service notification-service security-gateway-service chat-service dashboard-service; do
                 sudo docker stop \$APP || true
                 sudo docker rm \$APP || true
@@ -140,8 +146,12 @@ jobs:
               sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
               sudo docker run -d -p 8000:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
 
+              # Notificaciones consume localmente desde RabbitMQ y se conecta al adaptador NoSQL cloud
               sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
-              sudo docker run -d -p 8001:8000 --name notification-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
+              sudo docker run -d -p 8001:8000 --name notification-service \
+                -e RABBITMQ_HOST='localhost' \
+                -e MONGO_URI='mongodb://${{ env.QA_MONGO_IP }}:27017/' \
+                --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
 
               sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/security-gateway-service:qa
               sudo docker run -d -p 8003:8000 --name security-gateway-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/security-gateway-service:qa
@@ -154,20 +164,23 @@ jobs:
             "
 
             # =====================================================
-            # DESPLIEGUE EN NODO 2: ANALÍTICA, REPORTES Y AUDITORÍA
+            # DESPLIEGUE EN NODO 2: ANALÍTICA (APUNTA AL NODO 1 PARA EVENTOS)
             # =====================================================
             echo "=> Conectando a App-Node-2: ${{ env.QA_NODE_2_IP }}..."
             ssh -i ~/vockey.pem -o StrictHostKeyChecking=no ec2-user@${{ env.QA_NODE_2_IP }} "
               sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
               
-              # Listado de micros asignados al Nodo 2
+              # Limpieza de contenedores anteriores asignados al Nodo 2
               for APP in academic-risk-service report-service export-service analytics-service audit-service; do
                 sudo docker stop \$APP || true
                 sudo docker rm \$APP || true
               done
 
+              # Academic Risk asocia su cliente productor a la IP privada del Nodo 1
               sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
-              sudo docker run -d -p 8002:8000 --name academic-risk-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
+              sudo docker run -d -p 8002:8000 --name academic-risk-service \
+                -e RABBITMQ_HOST='${{ env.QA_NODE_1_IP }}' \
+                --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
 
               sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/report-service:qa
               sudo docker run -d -p 8006:8000 --name report-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/report-service:qa
@@ -185,7 +198,7 @@ jobs:
             # Cierre seguro de la llave PEM en el Bastion
             rm -f ~/vockey.pem
 
-
+ 
   deploy-prod:
     name: 'Deploy PRODUCCIÓN (Auto Scaling Group Refresh)'
     runs-on: ubuntu-latest
