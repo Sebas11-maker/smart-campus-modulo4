@@ -241,7 +241,7 @@ jobs:
           name: "Release Smart Campus M4 - Versión v1.${{ github.run_number }}.0"
           body: |
             ## Changes in this version
-                Locust implementation for load testing.
+                Changes in docker-compose.yml  
             
             *Commit de origen: ${{ github.sha }}*
           draft: false
