@@ -240,14 +240,8 @@ jobs:
           tag_name: v1.${{ github.run_number }}.0
           name: "Release Smart Campus M4 - Versión v1.${{ github.run_number }}.0"
           body: |
-            ## Novedades de esta Versión (Módulo 4)
-            
-            Automatización de despliegue continuo ejecutada exitosamente por el equipo (Xavier, Sebas, Wilson).
-            
-            ### Componentes Actualizados e Integrados:
-            * **Broker de Eventos:** RabbitMQ activo y configurado con control de Poison Pills.
-            * **Capa de Persistencia NoSQL:** MongoDB integrado mediante patrón Adapter para almacenamiento políglota.
-            * **Infraestructura Cloud:** Despliegue en AWS Academy sincronizado vía Terraform.
+            ## Changes in this version
+                Locust implementation for load testing.
             
             *Commit de origen: ${{ github.sha }}*
           draft: false
