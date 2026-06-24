@@ -3,7 +3,8 @@ name: 'CI-CD Smart Campus M4 Unificado'
 on:
   push:
     branches:
-      - qa 
+      - qa
+      - main
   workflow_dispatch:
 
 jobs:
@@ -83,10 +84,13 @@ jobs:
           
           for SVC in "${SERVICES[@]}"; do
             echo "===> PROCESANDO IMAGEN DOCKER DUAL: $SVC <==="
-            docker build -f $SVC/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/$SVC:qa .
-            docker build -f $SVC/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/$SVC:prod .
-            docker push ${{ secrets.DOCKERHUB_USERNAME }}/$SVC:qa
-            docker push ${{ secrets.DOCKERHUB_USERNAME }}/$SVC:prod
+            if [ "${{ github.ref_name }}" = "qa" ]; then
+              docker build -f $SVC/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/$SVC:qa .
+              docker push ${{ secrets.DOCKERHUB_USERNAME }}/$SVC:qa
+            elif [ "${{ github.ref_name }}" = "main" ]; then
+              docker build -f $SVC/Dockerfile -t ${{ secrets.DOCKERHUB_USERNAME }}/$SVC:prod .
+              docker push ${{ secrets.DOCKERHUB_USERNAME }}/$SVC:prod
+            fi
           done
 
   
@@ -94,6 +98,7 @@ jobs:
     name: 'Deploy QA (EC2 Consolidadas via Bastion)'
     runs-on: ubuntu-latest
     needs: docker-build-push
+    if: github.ref_name == 'qa'
     steps:
       - name: Configurar Credenciales AWS - CUENTA QA
         uses: aws-actions/configure-aws-credentials@v4
@@ -133,11 +138,9 @@ jobs:
             ssh -i ~/vockey.pem -o StrictHostKeyChecking=no ec2-user@${{ env.QA_NODE_1_IP }} "
               sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
               
-              # Garantizar la presencia del Broker RabbitMQ en la red interna del Nodo 1
               sudo docker stop rabbitmq || true && sudo docker rm rabbitmq || true
               sudo docker run -d -p 5672:5672 -p 15672:15672 --name rabbitmq --restart unless-stopped rabbitmq:3-management-alpine
               
-              # Limpieza de contenedores anteriores asignados al Nodo 1
               for APP in tracking-service notification-service security-gateway-service chat-service dashboard-service; do
                 sudo docker stop \$APP || true
                 sudo docker rm \$APP || true
@@ -146,7 +149,6 @@ jobs:
               sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
               sudo docker run -d -p 8000:8000 --name tracking-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/tracking-service:qa
 
-              # Notificaciones consume localmente desde RabbitMQ y se conecta al adaptador NoSQL cloud
               sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/notification-service:qa
               sudo docker run -d -p 8001:8000 --name notification-service \
                 -e RABBITMQ_HOST='localhost' \
@@ -164,19 +166,17 @@ jobs:
             "
 
             # =====================================================
-            # DESPLIEGUE EN NODO 2: ANALÍTICA (APUNTA AL NODO 1 PARA EVENTOS)
+            # DESPLIEGUE EN NODO 2: ANALÍTICA
             # =====================================================
             echo "=> Conectando a App-Node-2: ${{ env.QA_NODE_2_IP }}..."
             ssh -i ~/vockey.pem -o StrictHostKeyChecking=no ec2-user@${{ env.QA_NODE_2_IP }} "
               sudo docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
               
-              # Limpieza de contenedores anteriores asignados al Nodo 2
               for APP in academic-risk-service report-service export-service analytics-service audit-service; do
                 sudo docker stop \$APP || true
                 sudo docker rm \$APP || true
               done
 
-              # Academic Risk asocia su cliente productor a la IP privada del Nodo 1
               sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/academic-risk-service:qa
               sudo docker run -d -p 8002:8000 --name academic-risk-service \
                 -e RABBITMQ_HOST='${{ env.QA_NODE_1_IP }}' \
@@ -195,14 +195,14 @@ jobs:
               sudo docker run -d -p 8009:8000 --name audit-service --restart unless-stopped ${{ secrets.DOCKERHUB_USERNAME }}/audit-service:qa
             "
 
-            # Cierre seguro de la llave PEM en el Bastion
             rm -f ~/vockey.pem
 
- 
+  
   deploy-prod:
     name: 'Deploy PRODUCCIÓN (Auto Scaling Group Refresh)'
     runs-on: ubuntu-latest
-    needs: deploy-qa
+    needs: docker-build-push
+    if: github.ref_name == 'main'
     steps:
       - name: Configurar Credenciales AWS - CUENTA PRODUCCIÓN
         uses: aws-actions/configure-aws-credentials@v4
@@ -227,6 +227,7 @@ jobs:
     name: 'Generar Release Automático'
     runs-on: ubuntu-latest
     needs: deploy-prod
+    if: github.ref_name == 'main'
     steps:
       - name: Checkout código
         uses: actions/checkout@v3
