@@ -2,13 +2,14 @@ import os
 import json
 import pika
 import threading
+import logging
 from fastapi import FastAPI
-
-
-
 from fastapi.responses import HTMLResponse
 from pymongo import MongoClient
 from datetime import datetime
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [NOTIFICATION-SERVICE] - %(message)s')
+logger = logging.getLogger(__name__)
 
 ENV = os.getenv("ENV", "development")
 root = "/notifications" if ENV == "production" else ""
@@ -39,10 +40,10 @@ def guardar_en_mongodb(data: dict):
         }
         
         inspeccion_id = collection.insert_one(documento).inserted_id
-        print(f" [💾 MongoDB] Alerta guardada exitosamente con ID: {inspeccion_id}")
+        logger.info(f"[💾 MongoDB] Alerta guardada exitosamente NoSQL con ID: {inspeccion_id}")
         client.close()
     except Exception as mongo_err:
-        print(f" [⚠️ Alerta DB] No se pudo persistir en MongoDB (Modo Degradado Activo): {mongo_err}")
+        logger.error(f"[⚠️ Alerta DB] No se pudo persistir en MongoDB (Modo Degradado Activo): {mongo_err}")
 
 def iniciar_worker_consumidor():
     """Ejecuta el loop de escucha asíncrona de RabbitMQ"""
@@ -52,7 +53,7 @@ def iniciar_worker_consumidor():
         channel.queue_declare(queue='alertas_riesgo', durable=True)
 
         def callback(ch, method, properties, body):
-            print(f" [-->] Mensaje crudo recibido en worker: {body}")
+            logger.info(f"[AMQP Broker] Mensaje crudo recibido en worker asíncrono: {body.decode()}")
             
             try:
                 data = json.loads(body.decode())
@@ -62,27 +63,28 @@ def iniciar_worker_consumidor():
                 
                 alerta_formateada = f"NOTIFICACIÓN ENVIADA: Alerta de riesgo {data['nivel_riesgo']} para el estudiante ID {data['estudiante_id']}."
                 historial_notificaciones.append(alerta_formateada)
-                print(f" [✓] Procesado exitosamente: {alerta_formateada}")
+                logger.info(f"[✓ Worker] Evento procesado exitosamente: {alerta_formateada}")
                 
                 guardar_en_mongodb(data)
                 
             except (json.JSONDecodeError, ValueError) as err:
-                print(f" [🪓 Poison Pill Descartada] Error procesando el mensaje: {err}")
+                logger.warning(f"[🪓 Poison Pill Descartada] Error controlando el mensaje corrupto: {err}")
             
             ch.basic_ack(delivery_tag=method.delivery_tag)
 
         channel.basic_qos(prefetch_count=1)
         channel.basic_consume(queue='alertas_riesgo', on_message_callback=callback)
-        print(" [*] Worker de Notificaciones escuchando alertas_riesgo...")
+        logger.info("[*] Worker de Notificaciones escuchando de manera activa en alertas_riesgo...")
         channel.start_consuming()
     except Exception as e:
-        print(f" [!] Fallo crítico en el worker de RabbitMQ: {e}")
+        logger.error(f"[!] Fallo crítico estructural en el hilo de RabbitMQ: {e}")
 
 thread = threading.Thread(target=iniciar_worker_consumidor, daemon=True)
 thread.start()
 
 @app.get("/", response_class=HTMLResponse)
 async def frontend_notifications():
+    logger.info("Consulta HTTP Get al frontend del Notification Worker.")
     lista_html = "".join([f"<li class='p-2 bg-slate-700/50 rounded-lg border border-slate-600 mb-2 font-mono text-xs text-amber-300'>{n}</li>" for n in historial_notificaciones])
     return f"""
     <!DOCTYPE html>

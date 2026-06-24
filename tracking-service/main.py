@@ -1,64 +1,61 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+import os
+import logging
+import random
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
-app = FastAPI(title="Servicio de Rastreo de Activos UCE")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [TRACKING-SERVICE] - %(message)s')
+logger = logging.getLogger(__name__)
 
-class RequestTracking(BaseModel):
-    activo_id: str
-    latitud: float
-    longitud: float
-    responsable_id: int
+ENV = os.getenv("ENV", "development")
+root = "/tracking" if ENV == "production" else ""
+
+app = FastAPI(title="Tracking Service - UCE", root_path=root, docs_url="/docs")
+
+CIRCUIT_STATE = "CLOSED"  # CLOSED, OPEN, HALF-OPEN
+FAIL_COUNTER = 0
 
 @app.get("/", response_class=HTMLResponse)
 async def frontend_tracking():
-    return """
+    return f"""
     <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Smart Campus - Tracking Dashboard</title>
-        <script src="https://cdn.tailwindcss.com"></script>
-    </head>
-    <body class="bg-slate-900 text-white font-sans flex items-center justify-center h-screen m-0">
-        <div class="bg-slate-800 p-8 rounded-2xl shadow-2xl border border-purple-500/30 max-w-md w-full text-center mx-4">
-            <div class="inline-flex p-3 bg-purple-500/10 rounded-full text-purple-400 mb-4">
-                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                </svg>
+    <html>
+    <head><script src="https://cdn.tailwindcss.com"></script></head>
+    <body class="bg-slate-900 text-white flex items-center justify-center h-screen">
+        <div class="bg-slate-800 p-8 rounded-2xl text-center max-w-md w-full border border-amber-500/20">
+            <h1 class="text-2xl font-bold mb-2 text-amber-400">Tracking & Resiliency Service</h1>
+            <p class="text-sm text-slate-400 mb-6">Módulo 4 - Monitoreo Elástico de Posición Física</p>
+            <div class="p-3 bg-slate-900 rounded-xl font-mono text-xs mb-4">
+                Estado del Circuit Breaker: <span class="font-bold text-emerald-400">{CIRCUIT_STATE}</span>
             </div>
-            
-            <h1 class="text-2xl font-bold mb-2">Tracking Microservice</h1>
-            <p class="text-slate-400 text-sm mb-6">Módulo 4 - Monitoreo de Activos y Geolocalización (Hexagonal / Layers)</p>
-            
-            <div class="space-y-3">
-                <button onclick="window.location.href='/docs'" class="w-full bg-purple-600 hover:bg-purple-500 text-white font-semibold py-2.5 px-4 rounded-xl transition duration-200 shadow-lg shadow-purple-950/50">
-                    Ver API Swagger Interactiva
-                </button>
-                
-                <div class="p-3 bg-slate-900/50 rounded-xl border border-slate-700 text-center">
-                    <span class="text-xs text-emerald-400 font-mono font-bold">● Tracking Telemetry Active on Target EC2 Node</span>
-                </div>
-            </div>
+            <button onclick="window.location.href='/docs'" class="w-full bg-amber-600 hover:bg-amber-500 py-2 rounded-xl font-semibold">Ver Swagger</button>
         </div>
     </body>
     </html>
     """
 
-@app.post("/rastrear")
-def registrar_rastreo(payload: RequestTracking):
-    
-    print(f"[LOG TRACKING] Registrando ubicación geográfica para activo {payload.activo_id} (Lat: {payload.latitud}, Long: {payload.longitud})")
-    print(f"[PERSISTENCIA] Documento acoplado mediante Adapter Pattern indexado en MongoDB.")
-    
+@app.get("/localizar/{estudiante_id}", tags=["Resiliency / Circuit Breaker"])
+def localizar_dispositivo_estudiante(estudiante_id: int):
+    global CIRCUIT_STATE, FAIL_COUNTER
+    logger.info(f"Petición de localización para estudiante ID {estudiante_id}. Estado actual del breaker: {CIRCUIT_STATE}")
+
+    if CIRCUIT_STATE == "OPEN":
+        logger.warning("Circuit Breaker activo [OPEN]. Bloqueando petición por seguridad (Fail-Fast).")
+        raise HTTPException(status_code=503, detail="Servicio degradado temporalmente. Circuit Breaker bloqueó la llamada de red.")
+
+    if random.random() < 0.4:
+        FAIL_COUNTER += 1
+        logger.error(f"Fallo de conexión intermitente. Contador de errores consecutivos: {FAIL_COUNTER}")
+        if FAIL_COUNTER >= 3:
+            CIRCUIT_STATE = "OPEN"
+            logger.critical("🚨 ¡Límite de fallos superado! Cambiando estado del Circuit Breaker a OPEN")
+        raise HTTPException(status_code=500, detail="Error de timeout de red al geolocalizar antena.")
+
+    FAIL_COUNTER = 0
+    CIRCUIT_STATE = "CLOSED"
     return {
-        "rastreado": True,
-        "activo_id": payload.activo_id,
-        "coordenadas": {
-            "lat": payload.latitud,
-            "lng": payload.longitud
-        },
-        "status": "Ubicación sincronizada y publicada en Kafka Event Broker."
+        "estudiante_id": estudiante_id,
+        "campus_zona": "Biblioteca General - UCE",
+        "coordenadas": "0.1982° S, 78.5042° W",
+        "circuit_breaker": "CLOSED"
     }

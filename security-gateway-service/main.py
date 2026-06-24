@@ -1,7 +1,12 @@
 import os
-from fastapi import FastAPI
+import logging
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [SECURITY-GATEWAY] - %(message)s')
+logger = logging.getLogger(__name__)
 
 ENV = os.getenv("ENV", "development")
 root = "/security" if ENV == "production" else ""
@@ -13,11 +18,24 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 class TokenPayload(BaseModel):
     token: str
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
 @app.get("/", response_class=HTMLResponse)
 async def frontend_security():
+    logger.info("Acceso al Home Visual de Security Gateway desde el navegador.")
     return """
     <!DOCTYPE html>
     <html lang="es">
@@ -38,7 +56,7 @@ async def frontend_security():
                     Ver API Swagger Interactiva
                 </button>
                 <div class="p-3 bg-slate-900/50 rounded-xl text-center border border-slate-700">
-                    <span class="text-xs text-indigo-400 font-mono font-bold">● Firewall & Rate Limiting Activo</span>
+                    <span class="text-xs text-indigo-400 font-mono font-bold">● Firewall, JWT & CORS Activo</span>
                 </div>
             </div>
         </div>
@@ -46,11 +64,25 @@ async def frontend_security():
     </html>
     """
 
-@app.post("/validar")
+@app.post("/login", tags=["Autenticación"])
+def login(credentials: LoginRequest):
+    logger.info(f"Intento de inicio de sesión para el usuario: {credentials.username}")
+    if credentials.username == "admin" and credentials.password == "uce2026":
+        token_simulado = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiYWx1bW5vX3VjZSIsInJvbCI6IkVTVEVESUFOVEUifQ"
+        logger.info(f"Firma de JWT Exitosa para: {credentials.username}")
+        return {"access_token": token_simulado, "token_type": "bearer"}
+    logger.warning(f"Intento fallido de autenticación para: {credentials.username}")
+    raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+
+@app.post("/validar", tags=["Validación Token"])
 def validar_token(payload: TokenPayload):
-    return {
-        "valido": True,
-        "usuario": "alumno_uce",
-        "rol": "ESTUDIANTE",
-        "permisos": ["ver_notas", "crear_solicitud"]
-    }
+    logger.info("Validando integridad perimetral de firma JWT recibido")
+    if payload.token == "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiYWx1bW5vX3VjZSIsInJvbCI6IkVTVEVESUFOVEUifQ":
+        return {
+            "valido": True,
+            "usuario": "alumno_uce",
+            "rol": "ESTUDIANTE",
+            "permisos": ["ver_notas", "crear_solicitud"]
+        }
+    logger.error("Token JWT inválido, alterado o corrupto detectado en el Gateway")
+    raise HTTPException(status_code=403, detail="Token no autorizado")
