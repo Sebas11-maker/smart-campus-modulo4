@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
 
   rabbitmq:
@@ -14,7 +16,6 @@ services:
     networks:
       - smartcampus_net
 
-  
   mongodb:
     image: mongo:6.0
     container_name: mongodb_smartcampus
@@ -24,6 +25,66 @@ services:
       - mongodb_data:/data/db
     networks:
       - smartcampus_net
+
+ 
+  security-gateway-service:
+    build: ./security-gateway-service
+    container_name: security_gateway_m4
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=production
+    networks:
+      - smartcampus_net
+
+  academic-risk-service:
+    build: ./academic-risk-service
+    container_name: academic_risk_m4
+    ports:
+      - "8002:8002"
+    environment:
+      - ENV=production
+      - RABBITMQ_HOST=rabbitmq  
+    networks:
+      - smartcampus_net
+    depends_on:
+      - rabbitmq
+
+  notification-service:
+    build: ./notification-service
+    container_name: notification_service_m4
+    ports:
+      - "8004:8004"
+    environment:
+      - ENV=production
+      - RABBITMQ_HOST=rabbitmq          
+      - MONGO_URI=mongodb://mongodb:27017/ 
+    networks:
+      - smartcampus_net
+    depends_on:
+      - rabbitmq
+      - mongodb
+
+  analytics-service:
+    build: ./analytics-service
+    container_name: analytics_service_m4
+    ports:
+      - "8008:8008"
+    environment:
+      - ENV=production
+    networks:
+      - smartcampus_net
+
+  chat-service:
+    build: ./chat-service
+    container_name: chat_service_m4
+    ports:
+      - "8010:8010"
+    environment:
+      - ENV=production
+    networks:
+      - smartcampus_net
+
 
 volumes:
   rabbitmq_data:
