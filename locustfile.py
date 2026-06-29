@@ -1,7 +1,7 @@
 from locust import HttpUser, task, between
 
 class RendimientoSmartCampus(HttpUser):
-    host = "http://elb-uce-m4-prod-1772472632.us-east-1.elb.amazonaws.com"
+    host = "http://elb-uce-m4-prod-876695815.us-east-1.elb.amazonaws.com"
     wait_time = between(1, 3) # Simula retraso humano de 1 a 3 segundos
 
     @task(2)
