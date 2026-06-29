@@ -22,8 +22,6 @@ app = FastAPI(
     root_path=root
 )
 
-historial_notificaciones = []
-
 def guardar_en_mongodb(data: dict):
     """Conecta e inserta la alerta en MongoDB usando el patrón Adapter seguro"""
     try:
@@ -61,10 +59,7 @@ def iniciar_worker_consumidor():
                 if "estudiante_id" not in data or "nivel_riesgo" not in data:
                     raise ValueError("Mensaje Malformado (Poison Pill detectada)")
                 
-                alerta_formateada = f"NOTIFICACIÓN ENVIADA: Alerta de riesgo {data['nivel_riesgo']} para el estudiante ID {data['estudiante_id']}."
-                historial_notificaciones.append(alerta_formateada)
-                logger.info(f"[✓ Worker] Evento procesado exitosamente: {alerta_formateada}")
-                
+                logger.info(f"[✓ Worker] Evento desencadenado hacia persistencia para estudiante ID {data['estudiante_id']}.")
                 guardar_en_mongodb(data)
                 
             except (json.JSONDecodeError, ValueError) as err:
@@ -84,8 +79,24 @@ thread.start()
 
 @app.get("/", response_class=HTMLResponse)
 async def frontend_notifications():
-    logger.info("Consulta HTTP Get al frontend del Notification Worker.")
-    lista_html = "".join([f"<li class='p-2 bg-slate-700/50 rounded-lg border border-slate-600 mb-2 font-mono text-xs text-amber-300'>{n}</li>" for n in historial_notificaciones])
+    logger.info("Consulta HTTP Get al frontend del Notification Worker buscando en MongoDB.")
+    
+    alertas_reales = []
+    try:
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
+        db = client["smartcampus_db"]
+        collection = db["alertas_historial"]
+        
+        cursor = collection.find().sort("fecha_registro", -1).limit(15)
+        for doc in cursor:
+            alerta_formateada = f"NOTIFICACIÓN REAL RECUPERADA: Alerta de riesgo {doc.get('nivel_riesgo', 'ALTO')} para el estudiante ID {doc.get('estudiante_id')}."
+            alertas_reales.append(alerta_formateada)
+        client.close()
+    except Exception as mongo_err:
+        logger.error(f"[⚠️ Frontend DB Error] No se pudo leer el historial de MongoDB: {mongo_err}")
+        alertas_reales = ["⚠️ Modo Degradado Activo: Incapacidad temporal de conectar con la Capa de Persistencia."]
+
+    lista_html = "".join([f"<li class='p-2 bg-slate-700/50 rounded-lg border border-slate-600 mb-2 font-mono text-xs text-amber-300'>{n}</li>" for n in alertas_reales])
     return f"""
     <!DOCTYPE html>
     <html lang="es">
@@ -97,17 +108,16 @@ async def frontend_notifications():
     <body class="bg-slate-900 text-white flex items-center justify-center h-screen m-0">
         <div class="bg-slate-800 p-8 rounded-2xl shadow-2xl max-w-lg w-full text-center mx-4 border border-slate-700">
             <h1 class="text-2xl font-bold mb-2 text-emerald-400">Notification Service Worker</h1>
-            <p class="text-sm text-slate-400 mb-6">Eventos capturados asíncronamente desde RabbitMQ</p>
+            <p class="text-sm text-slate-400 mb-6">Lógica de Negocio Real: Eventos leídos dinámicamente desde MongoDB</p>
             <div class="p-4 bg-slate-900 rounded-xl h-48 overflow-y-auto border border-slate-700 text-left mb-4">
-                <ul>{lista_html if lista_html else "<p class='text-slate-500 text-xs text-center pt-16'>Esperando eventos de Alerta...</p>"}</ul>
+                <ul>{lista_html if lista_html else "<p class='text-slate-500 text-xs text-center pt-16'>Sin eventos de Alerta registrados en la base de datos.</p>"}</ul>
             </div>
             <div class="p-3 bg-slate-900/50 rounded-xl border border-slate-700/60 text-center">
-                <span class="text-xs text-emerald-400 font-mono font-bold">● Persistencia políglota lista (MongoDB Adapter)</span>
+                <span class="text-xs text-emerald-400 font-mono font-bold">● Capa de Persistencia Políglota Lista (MongoDB Adapter)</span>
             </div>
         </div>
     </body>
     </html>
     """
-
 
 
