@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-
+  
   rabbitmq:
     image: rabbitmq:3-management-alpine
     container_name: rabbitmq_smartcampus
@@ -26,7 +26,7 @@ services:
     networks:
       - smartcampus_net
 
- 
+
   security-gateway-service:
     build: ./security-gateway-service
     container_name: security_gateway_m4
@@ -57,8 +57,8 @@ services:
       - "8004:8004"
     environment:
       - ENV=production
-      - RABBITMQ_HOST=rabbitmq          
-      - MONGO_URI=mongodb://mongodb:27017/ 
+      - RABBITMQ_HOST=rabbitmq              
+      - MONGO_URI=mongodb://mongodb:27017/  
     networks:
       - smartcampus_net
     depends_on:
